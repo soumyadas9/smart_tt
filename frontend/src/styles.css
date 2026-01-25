@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+
+.paper {
+  background: white;
+  border: 2px solid #111;
+}
+
+.grid-border {
+  border: 1px solid #111;
+  overflow: hidden; /* ✅ prevents overlap bleeding into other cells */
+}
+
+.header-bold {
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+/* ---------------------------
+   PDF / PRINT LAYOUT (ONE PAGE)
+---------------------------- */
+
+/* A4 landscape + tight margins */
+@page {
+  size: A4 landscape;
+  margin: 7mm;
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { margin: 0; }
+
+  /* prevent splitting one timetable across pages */
+  .paper {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* ✅ hard-fit the timetable into one page (NO overlap) */
+  .tt-print-scale {
+    transform-origin: top left;
+    transform: scale(0.70);  /* tweak 0.66–0.78 if you want slightly bigger/smaller */
+  }
+
+  /* reduce base font slightly for print clarity */
+  .paper { font-size: 11px; }
+}
+
+/* Screen: no scaling */
+.tt-print-scale {
+  transform: none;
+  display: inline-block; /* helps consistent print sizing */
+}
+
+/* helpful truncation utility */
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ✅ FIX: uniform cell height (lecture and lab) */
+.tt-cell {
+  height: 92px;            /* fixed height so lab cell cannot stretch row */
+  min-height: 92px;
+}
+
+.tt-cell-inner {
+  height: 92px;
+}
+
+/* ✅ keep lab rows evenly distributed inside fixed-height cell */
+.tt-lab-row {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ✅ allow lecture subject to wrap nicely without stretching cell */
+.tt-subject {
+  line-height: 1.15;
+  max-height: 2.3em; /* ~2 lines */
+  overflow: hidden;
+}
