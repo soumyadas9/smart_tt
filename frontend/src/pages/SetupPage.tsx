@@ -39,6 +39,7 @@ export default function SetupPage({
   const [branchLabRows, setBranchLabRows] = useState<any[]>([]);
   const [branchSubjectRows, setBranchSubjectRows] = useState<any[]>([]);
 
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -109,6 +110,7 @@ export default function SetupPage({
       setBusy(false);
     }
   }
+    
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6">
@@ -135,6 +137,8 @@ export default function SetupPage({
           <div className="mt-1">{error}</div>
         </div>
       )}
+           
+
 
       {/* Branches to generate */}
       <div className="border border-black p-4">

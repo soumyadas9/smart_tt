@@ -12,6 +12,7 @@ from generator import (
 )
 
 app = Flask(__name__)
+
 CORS(app)
 @app.get("/")
 def home():
@@ -67,6 +68,10 @@ def get_branch_subjects(branch_id: int):
             ORDER BY s.name
         """, (branch_id,)).fetchall()
         return jsonify([dict(r) for r in rows])
+
+
+
+
 
 @app.post("/branch-subjects")
 def upsert_branch_subject():
@@ -367,6 +372,47 @@ def generate_full():
         "teacherView": teachers_accum,
         "roomView": rooms_accum
     })
+@app.delete("/teachers/<int:teacher_id>")
+def delete_teacher(teacher_id: int):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM teachers WHERE id=?", (teacher_id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.delete("/branches/<int:branch_id>")
+def delete_branch(branch_id: int):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM branches WHERE id=?", (branch_id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.delete("/labs/<int:lab_id>")
+def delete_lab(lab_id: int):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM labs WHERE id=?", (lab_id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.delete("/rooms/<int:room_id>")
+def delete_room(room_id: int):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM lab_rooms WHERE id=?", (room_id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.delete("/subjects/<int:subject_id>")
+def delete_subject(subject_id: int):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM subjects WHERE id=?", (subject_id,))
+        conn.commit()
+    return {"ok": True}
+
+@app.delete("/lecture-rooms/<int:lecture_room_id>")
+def delete_lecture_room(lecture_room_id: int):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM lecture_rooms WHERE id=?", (lecture_room_id,))
+        conn.commit()
+    return {"ok": True}
 
 
 if __name__ == "__main__":

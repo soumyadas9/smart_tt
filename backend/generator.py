@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Any, Optional
+import random
+from collections import defaultdict
+from typing import List, Tuple
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 PERIODS = [1, 2, 3, 4, 5, 6, 7, 8]
@@ -68,6 +71,123 @@ def generate_labs_only_timetable(branch_name: str, labs: List[LabConfig]) -> Dic
 
     return {"branch": branch_name, "timetable": timetable}
 
+def _count_subject_on_day(tt, day: str, subj_short: str) -> int:
+    c = 0
+    for p in PERIODS:
+        cell = tt[day].get(p)
+        if cell and cell.get("type") == "LECTURE" and cell.get("subjectShort") == subj_short:
+            c += 1
+    return c
+
+def _teacher_load_on_day(tt, day: str, teacher: str) -> int:
+    c = 0
+    for p in PERIODS:
+        cell = tt[day].get(p)
+        if not cell:
+            continue
+        if cell.get("type") == "LECTURE" and cell.get("teacher") == teacher:
+            c += 1
+        if cell.get("type") == "LAB_BLOCK":
+            for row in cell.get("batches", []):
+                if row.get("teacher") == teacher:
+                    c += 1
+    return c
+
+def _adjacent_same_subject(tt, day: str, p: int, subj_short: str) -> bool:
+    for neighbor in (p - 1, p + 1):
+        if neighbor in tt[day]:
+            cell = tt[day].get(neighbor)
+            if cell and cell.get("type") == "LECTURE" and cell.get("subjectShort") == subj_short:
+                return True
+    return False
+
+def _choose_best_slot_for_lecture(
+    tt,
+    teacher_busy_global: set,
+    room_busy_global: set,
+    subj_short: str,
+    teacher: str,
+    room: str,
+    subj_day_counts: Dict[str, Dict[str, int]],
+) -> Optional[Tuple[str, int]]:
+    """
+    Returns (day, period) for best slot; None if impossible.
+    Lower score = better.
+    """
+    candidates: List[Tuple[float, str, int]] = []
+
+    # iterate all free slots and score them
+    for day in DAYS:
+        for p in PERIODS:
+            if tt[day][p] is not None:
+                continue
+
+            # hard constraints (global)
+            if (day, p, teacher) in teacher_busy_global:
+                continue
+            if (day, p, room) in room_busy_global:
+                continue
+
+            score = 0.0
+            # ✅ Prefer early periods strongly (fills 1-4 first)
+# p=1 lowest penalty, p=8 highest penalty
+            early_penalty = {1: 0, 2: 0.2, 3: 0.4, 4: 0.6, 5: 2.0, 6: 2.4, 7: 2.8, 8: 3.2}
+            score += early_penalty.get(p, 3.0)
+
+
+            # Spread subject across days (strong)
+            score += 5 * subj_day_counts[subj_short].get(day, 0)
+
+            # Avoid adjacent same subject
+            if _adjacent_same_subject(tt, day, p, subj_short):
+                score += 3
+
+            # Mildly balance teacher daily load
+            score += 0.5 * _teacher_load_on_day(tt, day, teacher)
+
+            # Small random jitter to avoid identical weekly patterns
+            score += random.random() * 0.05
+
+            candidates.append((score, day, p))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[0])
+    return (candidates[0][1], candidates[0][2])
+def build_lecture_candidates(tt) -> List[Tuple[str, int]]:
+    """
+    Returns lecture slots in a "early-first but randomized" order:
+    - First try periods 1-4 (randomized)
+    - Then try periods 5-8 (randomized)
+    - Days are also randomized inside a balanced pattern
+    """
+    day_order = ["Monday", "Wednesday", "Friday", "Tuesday", "Thursday"]
+    # randomize day order slightly so it doesn't look same every run
+    day_order = random.sample(day_order, k=len(day_order))
+
+    early = [1, 2, 3, 4]
+    late = [5, 6, 7, 8]
+
+    random.shuffle(early)
+    random.shuffle(late)
+
+    candidates: List[Tuple[str, int]] = []
+
+    # early slots first across days
+    for d in day_order:
+        for p in early:
+            if tt[d][p] is None:
+                candidates.append((d, p))
+
+    # then late slots
+    for d in day_order:
+        for p in late:
+            if tt[d][p] is None:
+                candidates.append((d, p))
+
+    return candidates
+
 def generate_full_timetable(
     branch_name: str,
     labs: List[LabConfig],
@@ -101,42 +221,47 @@ def generate_full_timetable(
                     room_busy_global.add((day, p, row["room"]))
 
     # Balanced lecture distribution across week
-    day_cycle = ["Monday", "Wednesday", "Friday", "Tuesday", "Thursday"]
+        # -----------------------------
+    # Lectures: randomized + balanced distribution
+    # -----------------------------
+    # Track how many times each subject already placed per day
+    subj_day_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
+    # Build list of individual lecture sessions
+    sessions: List[Tuple[str, str, str]] = []
     for subj in subjects:
-        remaining = int(subj.lectures_per_week)
-        di = 0
+        for _ in range(int(subj.lectures_per_week)):
+            sessions.append((subj.subject_short, subj.teacher_name, subj.room_code))
 
-        while remaining > 0:
-            day = day_cycle[di % len(day_cycle)]
-            di += 1
+    # Shuffle so the order doesn't look the same every time
+    random.shuffle(sessions)
 
-            placed = False
-            for p in PERIODS:
-                # skip occupied
-                if tt[day][p] is not None:
-                    continue
+    for subj_short, teacher_name, room_code in sessions:
+        slot = _choose_best_slot_for_lecture(
+            tt,
+            teacher_busy_global,
+            room_busy_global,
+            subj_short,
+            teacher_name,
+            room_code,
+            subj_day_counts,
+        )
+        if slot is None:
+            raise ValueError(f"Could not place all lectures (stuck) for {subj_short} in {branch_name}.")
 
-                # hard constraints globally
-                if (day, p, subj.teacher_name) in teacher_busy_global:
-                    continue
-                if (day, p, subj.room_code) in room_busy_global:
-                    continue
+        day, p = slot
 
-                tt[day][p] = {
-                    "type": "LECTURE",
-                    "subjectShort": subj.subject_short,
-                    "teacher": subj.teacher_name,
-                    "room": subj.room_code,
-                }
-                teacher_busy_global.add((day, p, subj.teacher_name))
-                room_busy_global.add((day, p, subj.room_code))
-                remaining -= 1
-                placed = True
-                break
+        tt[day][p] = {
+            "type": "LECTURE",
+            "subjectShort": subj_short,
+            "teacher": teacher_name,
+            "room": room_code,
+        }
+        teacher_busy_global.add((day, p, teacher_name))
+        room_busy_global.add((day, p, room_code))
+        subj_day_counts[subj_short][day] += 1
 
-            if not placed:
-                raise ValueError(f"Could not place all lectures for {subj.subject_short} in {branch_name}.")
+           
 
     return out
 

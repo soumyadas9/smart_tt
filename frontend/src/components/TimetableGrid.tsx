@@ -2,6 +2,7 @@ import React from "react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import type { DropResult } from "@hello-pangea/dnd";
 
+
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as const;
 
 const PERIODS = [
@@ -37,6 +38,7 @@ export type BranchTimetable = {
 };
 
 export default function TimetableGrid({
+  
   titleRight,
   subtitleLeft,
   timetable,
@@ -51,9 +53,11 @@ export default function TimetableGrid({
   kind: "LECTURE" | "LAB";
   fromDay: string; fromP: number;
   toDay: string; toP: number;
-}) => void;
+}) => void | { ok: true } | { ok: false; reason: string };
 
 }) {
+  const [dndError, setDndError] = React.useState<string>("");
+
   function onDragEnd(result: DropResult) {
   if (!editable || !onMoveCell) return;
 
@@ -66,6 +70,10 @@ export default function TimetableGrid({
 
   const fromP = Number(fromPStr);
   const toP = Number(toPStr);
+  const fail = (msg: string) => {
+    setDndError(msg);
+    return;
+  };
 
   if (!fromDay || !toDay || !fromP || !toP) return;
   if (fromDay === toDay && fromP === toP) return;
@@ -95,7 +103,11 @@ export default function TimetableGrid({
     // we also don’t allow dropping lab on top of a lecture (keeps it simple + safe)
     if (isLecture(toCell) || isLecture(toCell2)) return;
 
-    onMoveCell({ kind: "LAB", fromDay, fromP, toDay, toP });
+    const res = onMoveCell({ kind: "LAB", fromDay, fromP, toDay, toP });
+if (res && (res as any).ok === false) {
+  setDndError((res as any).reason || "Move blocked.");
+}
+
     return;
   }
 
@@ -108,7 +120,11 @@ export default function TimetableGrid({
   // allow swap lecture <-> lecture OR move into empty
   if (toCell && !isLecture(toCell)) return;
 
-  onMoveCell({ kind: "LECTURE", fromDay, fromP, toDay, toP });
+  const res = onMoveCell({ kind: "LECTURE", fromDay, fromP, toDay, toP });
+if (res && (res as any).ok === false) {
+  setDndError((res as any).reason || "Move blocked.");
+}
+
 }
 
 
@@ -151,6 +167,21 @@ export default function TimetableGrid({
 
   return (
     <div className="paper p-4 print-all">
+      {dndError && (
+  <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+    <div className="bg-white border border-black p-4 max-w-md w-full space-y-3">
+      <div className="font-bold">Move blocked</div>
+      <div className="text-sm">{dndError}</div>
+      <button
+        className="px-3 py-2 border border-black text-sm"
+        onClick={() => setDndError("")}
+      >
+        OK
+      </button>
+    </div>
+  </div>
+)}
+
       {/* ✅ this wrapper is what scales for print */}
       <div className="tt-print-scale">
         {/* Top header */}
@@ -339,7 +370,8 @@ function DroppableSlot({
   cell: Cell;
   children: React.ReactNode;
 }) {
-  const dropDisabled = !editable || isLabBlock(cell) || isMerged(cell);
+  const dropDisabled = !editable || isMerged(cell);
+
 
   return (
     <Droppable droppableId={droppableId} isDropDisabled={dropDisabled}>

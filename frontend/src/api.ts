@@ -7,6 +7,36 @@ export type Room = { id: number; code: string };
 export type Subject = { id: number; name: string; short: string };
 export type LectureRoom = { id: number; code: string };
 
+async function okOrThrow(r: Response, label: string) {
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data?.error || `${label} failed (${r.status})`);
+}
+
+export async function deleteTeacher(id: number) {
+  const r = await fetch(`${BASE}/teachers/${id}`, { method: "DELETE" });
+  await okOrThrow(r, "Delete teacher");
+}
+export async function deleteBranch(id: number) {
+  const r = await fetch(`${BASE}/branches/${id}`, { method: "DELETE" });
+  await okOrThrow(r, "Delete branch");
+}
+export async function deleteLab(id: number) {
+  const r = await fetch(`${BASE}/labs/${id}`, { method: "DELETE" });
+  await okOrThrow(r, "Delete lab");
+}
+export async function deleteRoom(id: number) {
+  const r = await fetch(`${BASE}/rooms/${id}`, { method: "DELETE" });
+  await okOrThrow(r, "Delete room");
+}
+export async function deleteSubject(id: number) {
+  const r = await fetch(`${BASE}/subjects/${id}`, { method: "DELETE" });
+  await okOrThrow(r, "Delete subject");
+}
+export async function deleteLectureRoom(id: number) {
+  const r = await fetch(`${BASE}/lecture-rooms/${id}`, { method: "DELETE" });
+  await okOrThrow(r, "Delete lecture room");
+}
+
 export async function getSubjects(): Promise<Subject[]> {
   const r = await fetch(`${BASE}/subjects`);
   return r.json();
@@ -122,4 +152,23 @@ export async function generateFull(branchIds: number[]) {
     throw new Error(data?.error || `Generate failed (${r.status})`);
   }
   return data;
+}
+export async function createSubject(name: string, short: string) {
+  const r = await fetch(`${BASE}/subjects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, short }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data?.error || `Failed to create subject (${r.status})`);
+}
+
+export async function createLectureRoom(code: string) {
+  const r = await fetch(`${BASE}/lecture-rooms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data?.error || `Failed to create lecture room (${r.status})`);
 }

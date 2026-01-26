@@ -4,6 +4,100 @@ import { Tabs } from "../components/Tabs";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
+type MoveResult = { ok: true } | { ok: false; reason: string };
+
+function slotKey(branch: string, day: string, p: number) {
+  return `${branch}__${day}__${p}`;
+}
+
+function getCellAt(tt: any, day: string, p: number) {
+  const cell = tt?.[day]?.[p] ?? null;
+  if (!cell) return null;
+
+  // If it's MERGED, resolve to the LAB_BLOCK it points to
+  if (cell.type === "MERGED") {
+    const into = cell.into;
+    return tt?.[day]?.[into] ?? null;
+  }
+  return cell;
+}
+
+function collectOccupancies(branches: any[]) {
+  // Map: day|p => [{ teacher, room, branch, type, name }]
+  const occ: Record<string, any[]> = {};
+
+  for (const b of branches) {
+    const branchName = b.branch;
+    const tt = b.timetable;
+
+    for (const day of DAYS) {
+      for (const p of PERIODS) {
+        const cell = getCellAt(tt, day, p);
+        if (!cell) continue;
+
+        const k = `${day}__${p}`;
+        occ[k] ??= [];
+
+        if (cell.type === "LECTURE") {
+          occ[k].push({
+            branch: branchName,
+            type: "LECTURE",
+            teacher: cell.teacher,
+            room: cell.room,
+            name: cell.subjectShort,
+          });
+        }
+
+        if (cell.type === "LAB_BLOCK") {
+          for (const row of cell.batches || []) {
+            occ[k].push({
+              branch: branchName,
+              type: "LAB",
+              teacher: row.teacher,
+              room: row.room,
+              name: row.labShort,
+              batch: row.batch,
+            });
+          }
+        }
+      }
+    }
+  }
+  return occ;
+}
+
+function findClashReason(args: {
+  branches: any[];
+  teacher: string;
+  room: string;
+  day: string;
+  p: number;
+  ignoreSlots?: Set<string>; // slots we ignore (when swapping)
+}) {
+  const { branches, teacher, room, day, p, ignoreSlots } = args;
+
+  const occ = collectOccupancies(branches);
+  const k = `${day}__${p}`;
+  const entries = (occ[k] ?? []).filter((e) => {
+    // ignore specific slots (from/to) during swap checks
+    if (!ignoreSlots) return true;
+    // We don't have slot in entry, so we ignore by matching branch/day/p via separate mechanism is hard.
+    // Instead: we will ignore by not generating conflicts coming from the *exact lecture we're moving* (handled below in move logic).
+    return true;
+  });
+
+  for (const e of entries) {
+    if (teacher && e.teacher === teacher) {
+      return `Teacher clash: "${teacher}" is already busy on ${day} period ${p} (${e.type} in ${e.branch}${e.batch ? ` ${e.batch}` : ""} • ${e.name}).`;
+    }
+    if (room && e.room === room) {
+      return `Room clash: "${room}" is already occupied on ${day} period ${p} (${e.type} in ${e.branch}${e.batch ? ` ${e.batch}` : ""} • ${e.name}).`;
+    }
+  }
+
+  return null;
+}
+
 
 export default function ViewPage({
   data,
@@ -54,75 +148,172 @@ const [dirty, setDirty] = useState(false);
   const rooms = useMemo(() => Object.keys(roomView).sort(), [roomView]);
 
   // ✅ Drag-drop handler (updates branchesState)
-  function moveCell(
+ function moveCell(
   branchName: string,
   kind: "LECTURE" | "LAB",
   fromDay: string,
   fromP: number,
   toDay: string,
   toP: number
-) {
-  setBranchesState((prev) =>
-    prev.map((b) => {
-      if (b.branch !== branchName) return b;
+): MoveResult {
+  let result: MoveResult = { ok: true };
 
-      const tt = structuredClone(b.timetable);
+  setBranchesState((prev) => {
+    const branch = prev.find((x) => x.branch === branchName);
+    if (!branch) {
+      result = { ok: false, reason: "Branch not found." };
+      return prev;
+    }
 
-      const fromCell = tt[fromDay]?.[fromP] ?? null;
-      if (!fromCell) return b;
+    const tt = structuredClone(branch.timetable);
+    const fromCell = tt[fromDay]?.[fromP] ?? null;
+    if (!fromCell) {
+      result = { ok: false, reason: "Nothing to move from that slot." };
+      return prev;
+    }
 
-      // -----------------------
-      // 1) MOVE LECTURE (same as your old logic)
-      // -----------------------
-      if (kind === "LECTURE") {
-        const toCell = tt[toDay]?.[toP] ?? null;
+    // helper: build a simulated branches list with THIS branch timetable replaced
+    const simulateBranches = (nextTT: any) =>
+      prev.map((b) => (b.branch === branchName ? { ...b, timetable: nextTT } : b));
 
-        if (fromCell.type !== "LECTURE") return b;
-        if (toCell && (toCell.type === "LAB_BLOCK" || toCell.type === "MERGED")) return b;
-        if (toCell && toCell.type !== "LECTURE") return b;
+    // -----------------------
+    // 1) MOVE LECTURE
+    // -----------------------
+    if (kind === "LECTURE") {
+      const toCell = tt[toDay]?.[toP] ?? null;
 
-        tt[fromDay][fromP] = toCell ?? null;
-        tt[toDay][toP] = fromCell;
-
-        setDirty(true);
-        return { ...b, timetable: tt };
+      if (fromCell.type !== "LECTURE") {
+        result = { ok: false, reason: "Only lectures can be moved here." };
+        return prev;
+      }
+      if (toCell && (toCell.type === "LAB_BLOCK" || toCell.type === "MERGED")) {
+        result = { ok: false, reason: "You cannot drop a lecture onto a lab block." };
+        return prev;
+      }
+      if (toCell && toCell.type !== "LECTURE") {
+        result = { ok: false, reason: "You can only swap with another lecture, or move into empty." };
+        return prev;
       }
 
-      // -----------------------
-      // 2) MOVE LAB BLOCK (moves LAB_BLOCK + its MERGED hour)
-      // -----------------------
-      if (kind === "LAB") {
-        // must drag only LAB_BLOCK start slot (p=1,3,5,7)
-        if (fromCell.type !== "LAB_BLOCK") return b;
-        if (fromP % 2 === 0) return b;
+      // Simulate removal of both involved lecture slots before clash-check
+      // so the checker doesn't consider the lecture(s) you're swapping/moving.
+      const simTT = structuredClone(tt);
+      const movingLecture = fromCell;
+      const targetLecture = toCell; // lecture or null
 
-        const fromMerged = tt[fromDay]?.[fromP + 1] ?? null;
-        if (!fromMerged || fromMerged.type !== "MERGED") return b;
+      simTT[fromDay][fromP] = null;
+      simTT[toDay][toP] = null;
 
-        // target must be start slot too
-        if (toP % 2 === 0) return b;
-
-        const toCell1 = tt[toDay]?.[toP] ?? null;
-        const toCell2 = tt[toDay]?.[toP + 1] ?? null;
-
-        // keep it safe: only drop lab into two empty periods
-        if (toCell1 || toCell2) return b;
-
-        // clear old
-        tt[fromDay][fromP] = null;
-        tt[fromDay][fromP + 1] = null;
-
-        // place new (update start/end too)
-        tt[toDay][toP] = { ...fromCell, start: toP, end: toP + 1 };
-        tt[toDay][toP + 1] = { type: "MERGED", into: toP };
-
-        setDirty(true);
-        return { ...b, timetable: tt };
+      // Check placing moving lecture at destination
+      const clash1 = findClashReason({
+        branches: simulateBranches(simTT),
+        teacher: movingLecture.teacher,
+        room: movingLecture.room,
+        day: toDay,
+        p: toP,
+      });
+      if (clash1) {
+        result = { ok: false, reason: clash1 };
+        return prev;
       }
 
-      return b;
-    })
-  );
+      // If swap, check placing target lecture back at source
+      if (targetLecture) {
+        const clash2 = findClashReason({
+          branches: simulateBranches(simTT),
+          teacher: targetLecture.teacher,
+          room: targetLecture.room,
+          day: fromDay,
+          p: fromP,
+        });
+        if (clash2) {
+          result = { ok: false, reason: clash2 };
+          return prev;
+        }
+      }
+
+      // Apply swap/move
+      tt[fromDay][fromP] = targetLecture ?? null;
+      tt[toDay][toP] = movingLecture;
+
+      setDirty(true);
+      result = { ok: true };
+      return prev.map((b) => (b.branch === branchName ? { ...b, timetable: tt } : b));
+    }
+
+    // -----------------------
+    // 2) MOVE LAB BLOCK (optional)
+    // -----------------------
+    if (kind === "LAB") {
+      // If you truly want labs FIXED, just block here:
+      // result = { ok:false, reason:"Labs are fixed and cannot be moved." };
+      // return prev;
+
+      if (fromCell.type !== "LAB_BLOCK") {
+        result = { ok: false, reason: "You can only drag the main lab block (not the merged hour)." };
+        return prev;
+      }
+      if (fromP % 2 === 0) {
+        result = { ok: false, reason: "Labs can only be dragged from start slots (1,3,5,7)." };
+        return prev;
+      }
+
+      const fromMerged = tt[fromDay]?.[fromP + 1] ?? null;
+      if (!fromMerged || fromMerged.type !== "MERGED") {
+        result = { ok: false, reason: "Lab block is missing its merged hour (data inconsistent)." };
+        return prev;
+      }
+
+      if (toP % 2 === 0) {
+        result = { ok: false, reason: "Labs must be dropped on start slots (1,3,5,7)." };
+        return prev;
+      }
+
+      const toCell1 = tt[toDay]?.[toP] ?? null;
+      const toCell2 = tt[toDay]?.[toP + 1] ?? null;
+      if (toCell1 || toCell2) {
+        result = { ok: false, reason: "Need two empty periods to place a lab block." };
+        return prev;
+      }
+
+      // Clash check for ALL batches in lab block at BOTH hours
+      const simTT = structuredClone(tt);
+      simTT[fromDay][fromP] = null;
+      simTT[fromDay][fromP + 1] = null;
+
+      for (const hour of [toP, toP + 1]) {
+        for (const row of fromCell.batches || []) {
+          const clash = findClashReason({
+            branches: simulateBranches(simTT),
+            teacher: row.teacher,
+            room: row.room,
+            day: toDay,
+            p: hour,
+          });
+          if (clash) {
+            result = { ok: false, reason: clash };
+            return prev;
+          }
+        }
+      }
+
+      // apply move
+      tt[fromDay][fromP] = null;
+      tt[fromDay][fromP + 1] = null;
+
+      tt[toDay][toP] = { ...fromCell, start: toP, end: toP + 1 };
+      tt[toDay][toP + 1] = { type: "MERGED", into: toP };
+
+      setDirty(true);
+      result = { ok: true };
+      return prev.map((b) => (b.branch === branchName ? { ...b, timetable: tt } : b));
+    }
+
+    result = { ok: false, reason: "Unknown move type." };
+    return prev;
+  });
+
+  return result;
 }
 
 
@@ -183,8 +374,9 @@ const [dirty, setDirty] = useState(false);
   timetable={b.timetable}
   editable={manualEnabled}
   onMoveCell={({ kind, fromDay, fromP, toDay, toP }) =>
-    moveCell(b.branch, kind, fromDay, fromP, toDay, toP)
-  }
+  moveCell(b.branch, kind, fromDay, fromP, toDay, toP)
+}
+
 />
 
           ))}
