@@ -14,7 +14,9 @@ class LabConfig:
     lab_id: int
     lab_short: str
     teacher_name: str
-    room_code: str
+    room_full: str
+    room_short: str
+
 
 @dataclass
 class SubjectConfig:
@@ -35,25 +37,46 @@ def build_balanced_lab_slots() -> List[Tuple[str, int]]:
 def empty_grid() -> Dict[str, Dict[int, Any]]:
     return {d: {p: None for p in PERIODS} for d in DAYS}
 
-def generate_labs_only_timetable(branch_name: str, labs: List[LabConfig]) -> Dict[str, Any]:
+def generate_labs_only_timetable(
+    branch_name: str,
+    labs: List[LabConfig],
+    teacher_busy_global: Optional[set] = None
+) -> Dict[str, Any]:
+
     if len(labs) < 4:
         raise ValueError("Need at least 4 labs to run parallel lab blocks for 4 batches.")
+    if teacher_busy_global is None:
+        teacher_busy_global = set()
 
     m = len(labs)
-    all_slots = build_balanced_lab_slots()
-    if m > len(all_slots):
-        raise ValueError("Too many labs for available lab blocks in the week.")
+    all_slots = build_balanced_lab_slots()  # 20 slots
+
+    # Optional: shuffle a bit so branch2 doesn't always lose the same slots
+    # (keeps it balanced but avoids identical pattern every run)
+    # Comment this out if you want fully deterministic.
+    random.shuffle(all_slots)
 
     timetable = empty_grid()
-    session_slots = all_slots[:m]
 
-    for i, (day, start) in enumerate(session_slots):
+    placed = 0          # how many LAB_BLOCK sessions placed
+    slot_idx = 0        # pointer over all_slots
+    attempts = 0
+
+    # We must place exactly 'm' lab sessions (one session per lab config entry)
+    while placed < m and slot_idx < len(all_slots):
+        day, start = all_slots[slot_idx]
+        slot_idx += 1
+        attempts += 1
+
         end = start + 1
+
+        # Build batches for THIS session index = placed (not slot index)
         batch_rows = []
         used = set()
 
         for b_index, batch in enumerate(BATCHES):
-            lab = labs[(i + b_index) % m]
+            lab = labs[(placed + b_index) % m]
+
             if lab.lab_id in used:
                 raise RuntimeError("Internal assignment collision (should not happen).")
             used.add(lab.lab_id)
@@ -62,12 +85,37 @@ def generate_labs_only_timetable(branch_name: str, labs: List[LabConfig]) -> Dic
                 "batch": batch,
                 "labShort": lab.lab_short,
                 "teacher": lab.teacher_name,
-                "room": lab.room_code,
+                "roomShort": lab.room_short,
+                "roomFull": lab.room_full,
             })
 
+        # ✅ teacher clash check for BOTH hours
+        teachers_in_block = {row["teacher"] for row in batch_rows if row.get("teacher")}
+        clash = any(
+            (day, start, t) in teacher_busy_global or (day, end, t) in teacher_busy_global
+            for t in teachers_in_block
+        )
+        if clash:
+            continue  # ✅ try next slot instead of skipping labs entirely
+
+        # ✅ place lab block
         block = {"type": "LAB_BLOCK", "start": start, "end": end, "batches": batch_rows}
         timetable[day][start] = block
         timetable[day][end] = {"type": "MERGED", "into": start}
+
+        # ✅ reserve teacher for BOTH hours globally
+        for t in teachers_in_block:
+            teacher_busy_global.add((day, start, t))
+            teacher_busy_global.add((day, end, t))
+
+        placed += 1
+
+    # If we couldn't place all lab sessions, DON'T silently return missing labs
+    if placed < m:
+        raise ValueError(
+            f"Could not place all labs for {branch_name} due to teacher clashes. "
+            f"Placed {placed}/{m}. Try adding more free lab slots or reducing clashes."
+        )
 
     return {"branch": branch_name, "timetable": timetable}
 
@@ -199,14 +247,18 @@ def generate_full_timetable(
     Places labs first (2h), then lectures (1h) in empty slots.
     Enforces teacher+room not double-booked using global busy sets.
     """
-    teacher_busy_global = teacher_busy_global or set()
-    room_busy_global = room_busy_global or set()
+    if teacher_busy_global is None:
+        teacher_busy_global = set()
+    if room_busy_global is None:
+        room_busy_global = set()
+
 
     # If no labs configured, start with empty grid and place only lectures
     if not labs:
      out = {"branch": branch_name, "timetable": empty_grid()}
     else:
-     out = generate_labs_only_timetable(branch_name, labs)
+     out = generate_labs_only_timetable(branch_name, labs, teacher_busy_global)
+
 
     tt = out["timetable"]
 
@@ -216,9 +268,15 @@ def generate_full_timetable(
         for p in PERIODS:
             cell = tt[day][p]
             if cell and cell.get("type") == "LAB_BLOCK":
+                start = int(cell.get("start", p))
+                end = start + 1
                 for row in cell["batches"]:
-                    teacher_busy_global.add((day, p, row["teacher"]))
-                    room_busy_global.add((day, p, row["room"]))
+                    t = row["teacher"]
+                    teacher_busy_global.add((day, start, t))
+                    teacher_busy_global.add((day, end, t))
+                    r = row["roomFull"]
+                    room_busy_global.add((day, start, r))
+                    room_busy_global.add((day, end, r))
 
     # Balanced lecture distribution across week
         # -----------------------------
@@ -285,7 +343,8 @@ def build_teacher_view(branch_output: Dict[str, Any]) -> Dict[str, Any]:
                         "type": "LAB",
                         "batch": row["batch"],
                         "name": row["labShort"],
-                        "room": row["room"],
+                        "room": row["roomFull"],  # ✅ teacher view should use full room name
+
                     })
 
             elif cell.get("type") == "LECTURE":
@@ -316,7 +375,8 @@ def build_room_view(branch_output: Dict[str, Any]) -> Dict[str, Any]:
 
             if cell.get("type") == "LAB_BLOCK":
                 for row in cell["batches"]:
-                    r = row["room"]
+                    r = row["roomFull"]
+
                     room_view.setdefault(r, {d: {pp: [] for pp in PERIODS} for d in DAYS})
                     room_view[r][day][p].append({
                         "branch": branch,

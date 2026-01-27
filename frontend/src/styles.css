@@ -40,10 +40,21 @@
   }
 
   /* ✅ hard-fit the timetable into one page (NO overlap) */
+@media print {
   .tt-print-scale {
-    transform-origin: top left;
-    transform: scale(0.70);  /* tweak 0.66–0.78 if you want slightly bigger/smaller */
+    transform: none !important;
+    zoom: 0.70;
+    transform-origin: initial !important;
   }
+}
+@media print {
+  .grid-border {
+    border-width: 1px !important;
+    border-style: solid !important;
+    border-color: #111 !important;
+  }
+}
+
 
   /* reduce base font slightly for print clarity */
   .paper { font-size: 11px; }
@@ -63,21 +74,33 @@
 }
 
 /* ✅ FIX: uniform cell height (lecture and lab) */
+/* ✅ keep EVERY cell same height */
 .tt-cell {
-  height: 92px;            /* fixed height so lab cell cannot stretch row */
-  min-height: 92px;
-}
-
-.tt-cell-inner {
   height: 92px;
+  min-height: 92px;
+  overflow: hidden;
 }
 
-/* ✅ keep lab rows evenly distributed inside fixed-height cell */
+/* ✅ IMPORTANT: make inner take full height and distribute 4 rows evenly */
+.tt-cell-inner {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ✅ each batch row gets equal height and fits (no clipping) */
 .tt-lab-row {
   flex: 1 1 0;
   min-height: 0;
   overflow: hidden;
+
+  /* reduce vertical padding so 4 rows + borders fit */
+  padding-top: 1px !important;
+  padding-bottom: 1px !important;
+  line-height: 1.1;
+  align-items: center;
 }
+
 
 /* ✅ allow lecture subject to wrap nicely without stretching cell */
 .tt-subject {

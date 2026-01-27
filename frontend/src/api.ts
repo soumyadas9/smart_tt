@@ -3,7 +3,7 @@ const BASE = "http://localhost:5000";
 export type Branch = { id: number; name: string };
 export type Lab = { id: number; name: string; short: string };
 export type Teacher = { id: number; name: string };
-export type Room = { id: number; code: string };
+export type Room = { id: number; code: string; short?: string };
 export type Subject = { id: number; name: string; short: string };
 export type LectureRoom = { id: number; code: string };
 
@@ -115,9 +115,15 @@ export async function getRooms(): Promise<Room[]> {
   const r = await fetch(`${BASE}/rooms`);
   return r.json();
 }
-export async function createRoom(code: string) {
-  await fetch(`${BASE}/rooms`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+export async function createRoom(code: string, short?: string) {
+  const r = await fetch(`${BASE}/rooms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, short }),
+  });
+  await okOrThrow(r, "Create room");  // ✅ important
 }
+
 
 export async function getBranchLabs(branchId: number) {
   const r = await fetch(`${BASE}/branch-labs/${branchId}`);

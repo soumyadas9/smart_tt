@@ -54,6 +54,7 @@ export default function AdminPage() {
   const [newSubjectName, setNewSubjectName] = useState("");
   const [newSubjectShort, setNewSubjectShort] = useState("");
   const [newLectureRoom, setNewLectureRoom] = useState("");
+  const [newRoomShort, setNewRoomShort] = useState("");
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>("");
@@ -289,26 +290,38 @@ export default function AdminPage() {
         {/* Lab Rooms */}
         <Card title="Lab Rooms" count={rooms.length}>
           <div className="flex gap-2">
-            <input
-              className="border p-2 w-full text-sm"
-              value={newRoom}
-              onChange={(e) => setNewRoom(e.target.value)}
-              placeholder="Room code/name (e.g. 307, NPTEL Lab)"
-            />
-            <button
-              className="px-3 py-2 border border-black text-sm"
-              disabled={busy}
-              onClick={() =>
-                run(async () => {
-                  const code = newRoom.trim();
-                  if (!code) throw new Error("Room required");
-                  await createRoom(code);
-                  setNewRoom("");
-                })
-              }
-            >
-              Add
-            </button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+  <input
+    className="border p-2 w-full text-sm"
+    value={newRoom}
+    onChange={(e) => setNewRoom(e.target.value)}
+    placeholder="Full room name (e.g. Applied Science Lab II)"
+  />
+  <input
+    className="border p-2 w-full text-sm"
+    value={newRoomShort}
+    onChange={(e) => setNewRoomShort(e.target.value)}
+    placeholder="Short (optional) e.g. ASL2"
+  />
+</div>
+
+<button
+  className="px-3 py-2 border border-black text-sm"
+  disabled={busy}
+  onClick={() =>
+    run(async () => {
+      const code = newRoom.trim();
+      const short = newRoomShort.trim();
+      if (!code) throw new Error("Room required");
+      await createRoom(code, short || undefined);  // ✅ pass short
+      setNewRoom("");
+      setNewRoomShort("");
+    })
+  }
+>
+  Add
+</button>
+
           </div>
 
           <div className="max-h-40 overflow-auto border border-black p-2 text-sm">
@@ -318,7 +331,10 @@ export default function AdminPage() {
               <div className="space-y-1">
   {rooms.map((r) => (
     <div key={r.id} className="flex items-center justify-between border border-black p-2">
-      <div className="text-sm">{r.code}</div>
+      <div className="text-sm">
+  {r.code} <span className="opacity-70">({r.short || r.code})</span>
+</div>
+
       <button
         className="px-2 py-1 border border-black text-xs"
         disabled={busy}

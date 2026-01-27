@@ -16,7 +16,14 @@ const PERIODS = [
   { p: 8, label: "8", time: "4:15-5:15" },
 ] as const;
 
-type LabRow = { batch: string; labShort: string; teacher: string; room: string };
+type LabRow = {
+  batch: string;
+  labShort: string;
+  teacher: string;
+  roomShort: string;
+  roomFull: string;
+};
+
 type LabBlock = { type: "LAB_BLOCK"; start: number; end: number; batches: LabRow[] };
 type Merged = { type: "MERGED"; into: number };
 type LectureCell = { type: "LECTURE"; subjectShort: string; teacher: string; room: string };
@@ -143,7 +150,7 @@ if (res && (res as any).ok === false) {
         if ((cell as any).type === "LAB_BLOCK") {
           for (const row of (cell as any).batches || []) {
             if (row.teacher) teacherSet.add(row.teacher);
-            if (row.room) roomSet.add(row.room);
+            if (row.roomFull) roomSet.add(row.roomFull);
             if (row.labShort) labSet.add(row.labShort);
           }
         }
@@ -194,62 +201,50 @@ if (res && (res as any).ok === false) {
         </div>
 
         <DragDropContext onDragEnd={onDragEnd}>
-          {/* Main grid */}
-          <div className="mt-3 grid-border">
-            {/* header row */}
-            <div className="grid" style={{ gridTemplateColumns: "80px repeat(4, 1fr) 90px repeat(4, 1fr)" }}>
-              <div className="grid-border p-2 text-sm font-bold text-center">Day</div>
+  {/* Main grid */}
+  <div className="overflow-x-auto">
+    <div className="mt-3 grid-border">
+      {/* header row */}
+      <div className="grid" style={{ gridTemplateColumns: "80px repeat(4, 112px) 90px repeat(4, 112px)" }}>
+        <div className="grid-border p-2 text-sm font-bold text-center">Day</div>
 
-              {PERIODS.slice(0, 4).map((x) => (
-                <div key={x.p} className="grid-border p-2 text-sm font-bold text-center">
-                  <div>{x.label}</div>
-                  <div className="text-[11px] font-semibold opacity-80">{x.time}</div>
-                </div>
-              ))}
-
-              <div className="grid-border p-2 text-sm font-bold text-center">LUNCH BREAK</div>
-
-              {PERIODS.slice(4).map((x) => (
-                <div key={x.p} className="grid-border p-2 text-sm font-bold text-center">
-                  <div>{x.label}</div>
-                  <div className="text-[11px] font-semibold opacity-80">{x.time}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* day rows */}
-            {DAYS.map((day) => (
-              <div
-                key={day}
-                className="grid"
-                style={{ gridTemplateColumns: "80px repeat(4, 1fr) 90px repeat(4, 1fr)" }}
-              >
-                <div className="grid-border p-2 text-sm font-bold text-center">{day.slice(0, 2)}</div>
-
-                {/* periods 1-4 */}
-                {renderPeriodRow({
-                  day,
-                  dayData: timetable?.[day] ?? {},
-                  startP: 1,
-                  endP: 4,
-                  editable,
-                })}
-
-                {/* lunch */}
-                <div className="grid-border p-2 text-xs text-center font-semibold">Lunch</div>
-
-                {/* periods 5-8 */}
-                {renderPeriodRow({
-                  day,
-                  dayData: timetable?.[day] ?? {},
-                  startP: 5,
-                  endP: 8,
-                  editable,
-                })}
-              </div>
-            ))}
+        {PERIODS.slice(0, 4).map((x) => (
+          <div key={x.p} className="grid-border p-2 text-sm font-bold text-center">
+            <div>{x.label}</div>
+            <div className="text-[11px] font-semibold opacity-80">{x.time}</div>
           </div>
-        </DragDropContext>
+        ))}
+
+        <div className="grid-border p-2 text-sm font-bold text-center">LUNCH BREAK</div>
+
+        {PERIODS.slice(4).map((x) => (
+          <div key={x.p} className="grid-border p-2 text-sm font-bold text-center">
+            <div>{x.label}</div>
+            <div className="text-[11px] font-semibold opacity-80">{x.time}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* day rows */}
+      {DAYS.map((day) => (
+        <div
+          key={day}
+          className="grid"
+          style={{ gridTemplateColumns: "80px repeat(4, 112px) 90px repeat(4, 112px)" }}
+        >
+          <div className="grid-border p-2 text-sm font-bold text-center">{day.slice(0, 2)}</div>
+
+          {renderPeriodRow({ day, dayData: timetable?.[day] ?? {}, startP: 1, endP: 4, editable })}
+
+          <div className="grid-border p-2 text-xs text-center font-semibold">Lunch</div>
+
+          {renderPeriodRow({ day, dayData: timetable?.[day] ?? {}, startP: 5, endP: 8, editable })}
+        </div>
+      ))}
+    </div>
+  </div>
+</DragDropContext>
+
 
         {/* ✅ Reference-style footer lists */}
         <div className="mt-4 grid grid-cols-3 gap-4 text-[11px]">
@@ -348,7 +343,9 @@ function CellBox({ cell }: { cell: Cell }) {
               <div className="font-semibold truncate">
                 {b.batch} - {b.labShort}
               </div>
-              <div className="opacity-80 truncate">{b.room}</div>
+              <div className="room truncate">{b.roomShort}</div>
+
+
             </div>
           ))}
         </div>

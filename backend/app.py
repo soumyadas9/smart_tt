@@ -158,19 +158,31 @@ def create_teacher():
 @app.get("/rooms")
 def rooms():
     with get_conn() as conn:
-        rows = conn.execute("SELECT id, code FROM lab_rooms ORDER BY code").fetchall()
+        rows = conn.execute("SELECT id, code, short FROM lab_rooms ORDER BY code").fetchall()
         return jsonify([dict(r) for r in rows])
+
 
 @app.post("/rooms")
 def create_room():
     data = request.json
-    code = data.get("code","").strip()
+    code = data.get("code", "").strip()
+    short = (data.get("short", "") or "").strip()
+
     if not code:
         return {"error": "Room code required"}, 400
+
+    if not short:
+        short = code  # default fallback
+
     with get_conn() as conn:
-        conn.execute("INSERT OR IGNORE INTO lab_rooms (code) VALUES (?)", (code,))
+        conn.execute(
+            "INSERT OR IGNORE INTO lab_rooms (code, short) VALUES (?, ?)",
+            (code, short)
+        )
         conn.commit()
+
     return {"ok": True}
+
 
 @app.get("/branch-labs/<int:branch_id>")
 def get_branch_labs(branch_id: int):
@@ -178,7 +190,8 @@ def get_branch_labs(branch_id: int):
         rows = conn.execute("""
             SELECT bl.id, l.id AS lab_id, l.name AS lab_name, l.short AS lab_short,
                    t.id AS teacher_id, t.name AS teacher_name,
-                   r.id AS room_id, r.code AS room_code
+                   r.id AS room_id, r.code AS room_full, r.short AS room_short
+
             FROM branch_labs bl
             JOIN labs l ON l.id = bl.lab_id
             JOIN teachers t ON t.id = bl.teacher_id
@@ -237,7 +250,8 @@ def generate_labs_only():
             rows = conn.execute("""
                 SELECT l.id AS lab_id, l.short AS lab_short,
                        t.name AS teacher_name,
-                       r.code AS room_code
+                       r.code AS room_full, r.short AS room_short
+
                 FROM branch_labs bl
                 JOIN labs l ON l.id = bl.lab_id
                 JOIN teachers t ON t.id = bl.teacher_id
@@ -250,7 +264,8 @@ def generate_labs_only():
                 lab_id=r["lab_id"],
                 lab_short=r["lab_short"],
                 teacher_name=r["teacher_name"],
-                room_code=r["room_code"]
+                room_full=r["room_full"],
+                room_short=(r["room_short"] or r["room_full"])
             ) for r in rows]
 
             branch_output = generate_labs_only_timetable(b["name"], labs)
@@ -303,7 +318,8 @@ def generate_full():
             lab_rows = conn.execute("""
                 SELECT l.id AS lab_id, l.short AS lab_short,
                        t.name AS teacher_name,
-                       r.code AS room_code
+                       r.code AS room_full, r.short AS room_short
+
                 FROM branch_labs bl
                 JOIN labs l ON l.id = bl.lab_id
                 JOIN teachers t ON t.id = bl.teacher_id
@@ -316,7 +332,8 @@ def generate_full():
                 lab_id=r["lab_id"],
                 lab_short=r["lab_short"],
                 teacher_name=r["teacher_name"],
-                room_code=r["room_code"]
+                room_full=r["room_full"],
+                room_short=(r["room_short"] or r["room_full"])
             ) for r in lab_rows]
 
             # subjects config

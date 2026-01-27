@@ -118,7 +118,7 @@ export default function SetupPage({
         <div>
           <div className="text-2xl font-bold">Smart Timetable Generator</div>
           <div className="text-sm opacity-80">
-            Select branches → Configure branch mappings (Labs + Subjects) → Generate
+           
           </div>
         </div>
 
@@ -247,7 +247,7 @@ export default function SetupPage({
           </div>
 
           <div className="text-xs opacity-70 mt-2">
-            If lectures still don’t show after mapping subjects, it means the subject mappings weren’t saved into{" "}
+            
             <code>branch_subjects</code>.
           </div>
         </div>

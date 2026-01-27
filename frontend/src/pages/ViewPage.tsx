@@ -54,7 +54,7 @@ function collectOccupancies(branches: any[]) {
               branch: branchName,
               type: "LAB",
               teacher: row.teacher,
-              room: row.room,
+              room: row.roomFull,
               name: row.labShort,
               batch: row.batch,
             });
@@ -286,7 +286,7 @@ const [dirty, setDirty] = useState(false);
           const clash = findClashReason({
             branches: simulateBranches(simTT),
             teacher: row.teacher,
-            room: row.room,
+            room: row.roomFull,
             day: toDay,
             p: hour,
           });
@@ -358,7 +358,7 @@ const [dirty, setDirty] = useState(false);
 
 
     <div className="text-sm opacity-70">
-      Drag & drop works for <b>LECTURES only</b> (labs stay fixed).
+     
     </div>
   </div>
 )}
@@ -370,7 +370,7 @@ const [dirty, setDirty] = useState(false);
             <TimetableGrid
   key={b.branch}
   titleRight={`CLASS: ${b.branch}`}
-  subtitleLeft={`ACADEMIC YEAR 2023-24   W.E.F 21/08/2023`}
+  subtitleLeft={`ACADEMIC YEAR 2026-27   W.E.F 15/07/2026`}
   timetable={b.timetable}
   editable={manualEnabled}
   onMoveCell={({ kind, fromDay, fromP, toDay, toP }) =>
@@ -522,7 +522,7 @@ function buildViewsFromBranches(branches: BranchTimetable[]) {
         if ((cell as any).type === "LAB_BLOCK") {
           for (const row of (cell as any).batches) {
             const t = row.teacher;
-            const r = row.room;
+            const r = row.roomFull;
 
             teacherView[t] ??= initGrid();
             roomView[r] ??= initGrid();
@@ -532,7 +532,7 @@ function buildViewsFromBranches(branches: BranchTimetable[]) {
               type: "LAB",
               batch: row.batch,
               name: row.labShort,
-              room: r,
+              room: row.roomFull,
             });
 
             roomView[r][day][p].push({
