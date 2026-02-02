@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import TimetableGrid, { type BranchTimetable } from "../components/TimetableGrid";
 import { Tabs } from "../components/Tabs";
+import MasterTimetableView from "../components/MasterTimetableView";
+
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -75,7 +77,7 @@ function findClashReason(args: {
   ignoreSlots?: Set<string>; // slots we ignore (when swapping)
 }) {
   const { branches, teacher, room, day, p, ignoreSlots } = args;
-
+  
   const occ = collectOccupancies(branches);
   const k = `${day}__${p}`;
   const entries = (occ[k] ?? []).filter((e) => {
@@ -106,7 +108,7 @@ export default function ViewPage({
   data: any;
   onBack: () => void;
 }) {
-  const [tab, setTab] = useState<"Student View" | "Teacher View" | "Lab View">("Student View");
+  const [tab, setTab] = useState<"Student View" | "Teacher View" | "Lab View" | "Master View">("Student View");
 const [selectedTeacher, setSelectedTeacher] = useState("");
 const [selectedRoom, setSelectedRoom] = useState("");
 
@@ -150,12 +152,14 @@ const [dirty, setDirty] = useState(false);
   // ✅ Drag-drop handler (updates branchesState)
  function moveCell(
   branchName: string,
-  kind: "LECTURE" | "LAB",
+  kind: "LECTURE" | "LAB" | "LAB_ROW",
   fromDay: string,
   fromP: number,
   toDay: string,
-  toP: number
-): MoveResult {
+  toP: number,
+  batch?: string          // ✅ ADD THIS
+): MoveResult
+ {
   let result: MoveResult = { ok: true };
 
   setBranchesState((prev) => {
@@ -240,6 +244,122 @@ const [dirty, setDirty] = useState(false);
       result = { ok: true };
       return prev.map((b) => (b.branch === branchName ? { ...b, timetable: tt } : b));
     }
+   // -----------------------
+// 2) MOVE INDIVIDUAL LAB ROW (BATCH)
+// -----------------------
+if (kind === "LAB_ROW") {
+  if (!batch) {
+    result = { ok: false, reason: "Missing batch information." };
+    return prev;
+  }
+
+  if (fromP % 2 === 0 || toP % 2 === 0) {
+    result = { ok: false, reason: "Labs must start at periods 1,3,5,7." };
+    return prev;
+  }
+
+  const fromBlock = tt[fromDay]?.[fromP];
+  if (!fromBlock || fromBlock.type !== "LAB_BLOCK") {
+    result = { ok: false, reason: "Source is not a lab block." };
+    return prev;
+  }
+
+  const row = fromBlock.batches.find((b: any) => b.batch === batch);
+  if (!row) {
+    result = { ok: false, reason: "Lab batch not found in source." };
+    return prev;
+  }
+
+  const toCell1 = tt[toDay]?.[toP] ?? null;
+  const toCell2 = tt[toDay]?.[toP + 1] ?? null;
+
+  // target allowed:
+  // 1) empty 2h slot: both null
+  // 2) existing LAB_BLOCK at start, with its MERGED next hour
+  const empty2hOK = toCell1 === null && toCell2 === null;
+  const existingLabOK =
+    toCell1?.type === "LAB_BLOCK" && (toCell2 === null || (toCell2.type === "MERGED" && toCell2.into === toP));
+
+  if (!(empty2hOK || existingLabOK)) {
+    result = { ok: false, reason: "Invalid target for lab row. Drop on an empty 2-hour slot or an existing lab slot." };
+    return prev;
+  }
+
+  // simulate timetable with the row removed from source (for clash check)
+  const simTT = structuredClone(tt);
+  const simFrom = simTT[fromDay][fromP];
+
+  if (!simFrom || simFrom.type !== "LAB_BLOCK") {
+    result = { ok: false, reason: "Internal error: source lab block missing." };
+    return prev;
+  }
+
+  simFrom.batches = simFrom.batches.filter((b: any) => b.batch !== batch);
+
+  // if it becomes empty in simulation, clear merged hour too
+  if (simFrom.batches.length === 0) {
+    simTT[fromDay][fromP] = null;
+    simTT[fromDay][fromP + 1] = null;
+  } else {
+    simTT[fromDay][fromP] = simFrom;
+    simTT[fromDay][fromP + 1] = { type: "MERGED", into: fromP };
+  }
+
+  // teacher clash check (both hours)
+  const simulateBranches = (nextTT: any) =>
+    prev.map((b) => (b.branch === branchName ? { ...b, timetable: nextTT } : b));
+
+  for (const hour of [toP, toP + 1]) {
+    const clash = findClashReason({
+      branches: simulateBranches(simTT),
+      teacher: row.teacher,
+      room: "",       // you said ignore lab room constraint for now
+      day: toDay,
+      p: hour,
+    });
+    if (clash) {
+      result = { ok: false, reason: clash };
+      return prev;
+    }
+  }
+
+  // ✅ APPLY MOVE (real tt)
+  // remove from source
+  fromBlock.batches = fromBlock.batches.filter((b: any) => b.batch !== batch);
+
+  // cleanup source if empty
+  if (fromBlock.batches.length === 0) {
+    tt[fromDay][fromP] = null;
+    tt[fromDay][fromP + 1] = null;
+  } else {
+    tt[fromDay][fromP] = fromBlock;
+    tt[fromDay][fromP + 1] = { type: "MERGED", into: fromP };
+  }
+
+  // add to destination
+  if (empty2hOK) {
+    tt[toDay][toP] = { type: "LAB_BLOCK", start: toP, end: toP + 1, batches: [row] };
+    tt[toDay][toP + 1] = { type: "MERGED", into: toP };
+  } else {
+    // existing LAB_BLOCK
+    const dest = tt[toDay][toP] as any;
+
+    // prevent duplicate same batch
+    if (dest.batches.some((b: any) => b.batch === batch)) {
+      result = { ok: false, reason: `Batch ${batch} already exists in that lab slot.` };
+      return prev;
+    }
+
+    dest.batches.push(row);
+    tt[toDay][toP] = dest;
+    tt[toDay][toP + 1] = { type: "MERGED", into: toP };
+  }
+
+  setDirty(true);
+  result = { ok: true };
+  return prev.map((b) => (b.branch === branchName ? { ...b, timetable: tt } : b));
+}
+
 
     // -----------------------
     // 2) MOVE LAB BLOCK (optional)
@@ -324,7 +444,8 @@ const [dirty, setDirty] = useState(false);
           {"<- Back"}
         </button>
 
-        <Tabs tabs={["Student View", "Teacher View", "Lab View"]} active={tab} onChange={(t) => setTab(t as any)} />
+        <Tabs tabs={["Student View", "Teacher View", "Lab View", "Master View"]} active={tab} onChange={(t) => setTab(t as any)} />
+
       </div>
 
       {/* ✅ Manual toggle shown only in Student View (because drag-drop is inside TimetableGrid) */}
@@ -373,9 +494,18 @@ const [dirty, setDirty] = useState(false);
   subtitleLeft={`ACADEMIC YEAR 2026-27   W.E.F 15/07/2026`}
   timetable={b.timetable}
   editable={manualEnabled}
-  onMoveCell={({ kind, fromDay, fromP, toDay, toP }) =>
-  moveCell(b.branch, kind, fromDay, fromP, toDay, toP)
+  onMoveCell={(args) =>
+  moveCell(
+    b.branch,
+    args.kind,
+    args.fromDay,
+    args.fromP,
+    args.toDay,
+    args.toP,
+    "batch" in args ? args.batch : undefined   // ✅ PASS batch
+  )
 }
+
 
 />
 
@@ -432,6 +562,11 @@ const [dirty, setDirty] = useState(false);
           )}
         </div>
       )}
+      {/* ✅ ADDED MASTER VIEW RENDER */}
+      {tab === "Master View" && (
+        <MasterTimetableView branches={branchesState} />
+      )}
+
     </div>
   );
 }

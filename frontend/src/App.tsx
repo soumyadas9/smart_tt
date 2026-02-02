@@ -45,18 +45,19 @@ export default function App() {
       {TopNav}
 
       {mode === "setup" && (
-        <SetupPage
-          onReadyGenerate={async (branchIds) => {
-            try {
-              const data = await generateFull(branchIds);
-              setGenData(data);
-              setMode("view");
-            } catch (e: any) {
-              alert(e?.message ?? "Generate failed.");
-            }
-          }}
-        />
-      )}
+  <SetupPage
+    onReadyGenerate={async (branchIds, config) => {
+      try {
+        const data = await generateFull(branchIds, config);
+        setGenData(data);
+        setMode("view");
+      } catch (e: any) {
+        alert(e?.message ?? "Generate failed.");
+      }
+    }}
+  />
+)}
+
 
       {mode === "view" && <ViewPage data={genData} onBack={() => setMode("setup")} />}
 

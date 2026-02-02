@@ -68,6 +68,7 @@ export async function upsertBranchSubject(
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data?.error || `Failed to save subject mapping (${r.status})`);
 }
+
 export async function deleteBranchLab(branchId: number, labId: number) {
   await fetch(`${BASE}/branch-labs`, {
     method: "DELETE",
@@ -75,6 +76,7 @@ export async function deleteBranchLab(branchId: number, labId: number) {
     body: JSON.stringify({ branchId, labId }),
   });
 }
+
 export async function deleteBranchSubject(branchId: number, subjectId: number) {
   const r = await fetch(`${BASE}/branch-subjects`, {
     method: "DELETE",
@@ -86,13 +88,16 @@ export async function deleteBranchSubject(branchId: number, subjectId: number) {
   if (!r.ok) throw new Error(data?.error || `Failed to delete subject mapping (${r.status})`);
 }
 
-
 export async function getBranches(): Promise<Branch[]> {
   const r = await fetch(`${BASE}/branches`);
   return r.json();
 }
 export async function createBranch(name: string) {
-  await fetch(`${BASE}/branches`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+  await fetch(`${BASE}/branches`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
 }
 
 export async function getLabs(): Promise<Lab[]> {
@@ -100,7 +105,11 @@ export async function getLabs(): Promise<Lab[]> {
   return r.json();
 }
 export async function createLab(name: string, short: string) {
-  await fetch(`${BASE}/labs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, short }) });
+  await fetch(`${BASE}/labs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, short }),
+  });
 }
 
 export async function getTeachers(): Promise<Teacher[]> {
@@ -108,7 +117,11 @@ export async function getTeachers(): Promise<Teacher[]> {
   return r.json();
 }
 export async function createTeacher(name: string) {
-  await fetch(`${BASE}/teachers`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+  await fetch(`${BASE}/teachers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
 }
 
 export async function getRooms(): Promise<Room[]> {
@@ -121,9 +134,8 @@ export async function createRoom(code: string, short?: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code, short }),
   });
-  await okOrThrow(r, "Create room");  // ✅ important
+  await okOrThrow(r, "Create room");
 }
-
 
 export async function getBranchLabs(branchId: number) {
   const r = await fetch(`${BASE}/branch-labs/${branchId}`);
@@ -146,11 +158,19 @@ export async function generateLabsOnly(branchIds: number[]) {
   });
   return r.json();
 }
-export async function generateFull(branchIds: number[]) {
+
+export async function generateFull(
+  branchIds: number[],
+  config?: { classStrength: number; batchSize: number }
+) {
   const r = await fetch(`${BASE}/generate/full`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ branchIds }),
+    body: JSON.stringify({
+      branchIds,
+      classStrength: config?.classStrength,
+      batchSize: config?.batchSize,
+    }),
   });
 
   const data = await r.json().catch(() => ({}));
@@ -159,6 +179,7 @@ export async function generateFull(branchIds: number[]) {
   }
   return data;
 }
+
 export async function createSubject(name: string, short: string) {
   const r = await fetch(`${BASE}/subjects`, {
     method: "POST",

@@ -20,11 +20,18 @@ import {
   type LectureRoom,
 } from "../api";
 
+function makeBatches(classStrength: number, batchSize: number) {
+  const n = Math.max(1, Math.ceil(Math.max(1, classStrength) / Math.max(1, batchSize)));
+  return Array.from({ length: n }, (_, i) => `B${i + 1}`);
+}
 
 export default function SetupPage({
   onReadyGenerate,
 }: {
-  onReadyGenerate: (branchIds: number[]) => Promise<void> | void;
+  onReadyGenerate: (
+    branchIds: number[],
+    config: { classStrength: number; batchSize: number }
+  ) => Promise<void> | void;
 }) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [labs, setLabs] = useState<Lab[]>([]);
@@ -33,12 +40,15 @@ export default function SetupPage({
   const [labRooms, setLabRooms] = useState<Room[]>([]);
   const [lectureRooms, setLectureRooms] = useState<LectureRoom[]>([]);
 
+  const [classStrength, setClassStrength] = useState<number>(80);
+  const [batchSize, setBatchSize] = useState<number>(20);
+  const batches = useMemo(() => makeBatches(classStrength, batchSize), [classStrength, batchSize]);
+
   const [selectedBranchId, setSelectedBranchId] = useState<number | null>(null);
   const [selectedBranchIds, setSelectedBranchIds] = useState<number[]>([]);
 
   const [branchLabRows, setBranchLabRows] = useState<any[]>([]);
   const [branchSubjectRows, setBranchSubjectRows] = useState<any[]>([]);
-
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -62,7 +72,6 @@ export default function SetupPage({
 
     if (!selectedBranchId && b.length) setSelectedBranchId(b[0].id);
     setSelectedBranchIds((prev) => (prev.length ? prev : []));
-
   }
 
   useEffect(() => {
@@ -71,10 +80,7 @@ export default function SetupPage({
   }, []);
 
   async function refreshBranchMappings(branchId: number) {
-    const [labMap, subjMap] = await Promise.all([
-      getBranchLabs(branchId),
-      getBranchSubjects(branchId),
-    ]);
+    const [labMap, subjMap] = await Promise.all([getBranchLabs(branchId), getBranchSubjects(branchId)]);
     setBranchLabRows(Array.isArray(labMap) ? labMap : []);
     setBranchSubjectRows(Array.isArray(subjMap) ? subjMap : []);
   }
@@ -103,29 +109,28 @@ export default function SetupPage({
     }
     try {
       setBusy(true);
-      await onReadyGenerate(selectedBranchIds);
+      await onReadyGenerate(selectedBranchIds, { classStrength, batchSize });
     } catch (e: any) {
       setError(e?.message ?? "Generate failed.");
     } finally {
       setBusy(false);
     }
   }
-    
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6">
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
           <div className="text-2xl font-bold">Smart Timetable Generator</div>
-          <div className="text-sm opacity-80">
-           
-          </div>
+          <div className="text-sm opacity-80"></div>
         </div>
 
         <button
           onClick={handleGenerate}
           disabled={busy}
-          className={`px-4 py-2 rounded text-sm ${busy ? "bg-gray-300 text-gray-700" : "bg-black text-white"}`}
+          className={`px-4 py-2 rounded text-sm ${
+            busy ? "bg-gray-300 text-gray-700" : "bg-black text-white"
+          }`}
         >
           {busy ? "Generating..." : "Generate Timetable"}
         </button>
@@ -137,8 +142,6 @@ export default function SetupPage({
           <div className="mt-1">{error}</div>
         </div>
       )}
-           
-
 
       {/* Branches to generate */}
       <div className="border border-black p-4">
@@ -177,6 +180,27 @@ export default function SetupPage({
             </select>
           </div>
 
+          {/* Keep these inputs (batches logic stays!) */}
+          <div className="flex gap-4 items-center">
+            <div className="text-sm font-bold">Class Strength:</div>
+            <input
+              type="number"
+              min={1}
+              className="border p-2 w-28 text-sm"
+              value={classStrength}
+              onChange={(e) => setClassStrength(Number(e.target.value))}
+            />
+
+            <div className="text-sm font-bold">Batch Size:</div>
+            <input
+              type="number"
+              min={1}
+              className="border p-2 w-28 text-sm"
+              value={batchSize}
+              onChange={(e) => setBatchSize(Number(e.target.value))}
+            />
+          </div>
+
           <div className="text-sm border border-black px-3 py-2">
             Configuring: <b>{selectedBranchName || "—"}</b>
           </div>
@@ -204,6 +228,7 @@ export default function SetupPage({
                     rooms={labRooms}
                     selectedBranchId={selectedBranchId}
                     existing={branchLabRows.find((x) => x.lab_id === lab.id)}
+                    batches={batches}
                     onSaved={async () => {
                       if (selectedBranchId) await refreshBranchMappings(selectedBranchId);
                     }}
@@ -216,7 +241,9 @@ export default function SetupPage({
 
         {/* SUBJECTS TABLE */}
         <div>
-          <div className="font-bold mb-2">2) Configure Subjects (subject → teacher → lecture room → lectures/week)</div>
+          <div className="font-bold mb-2">
+            2) Configure Subjects (subject → teacher → lecture room → lectures/week)
+          </div>
           <div className="overflow-auto">
             <table className="w-full text-sm border border-black">
               <thead className="bg-gray-100">
@@ -247,8 +274,7 @@ export default function SetupPage({
           </div>
 
           <div className="text-xs opacity-70 mt-2">
-            
-            <code>branch_subjects</code>.
+            Stored in <code>branch_subjects</code>.
           </div>
         </div>
       </div>
@@ -265,16 +291,19 @@ function BranchLabRow({ lab, teachers, rooms, selectedBranchId, existing, onSave
     setRoomId(existing?.room_id ?? "");
   }, [existing?.teacher_id, existing?.room_id]);
 
-  const ready = !!selectedBranchId && !!teacherId && !!roomId;
-
   return (
     <tr>
       <td className="border border-black p-2">
         <div className="font-semibold">{lab.short}</div>
         <div className="text-xs opacity-70">{lab.name}</div>
       </td>
+
       <td className="border border-black p-2">
-        <select className="border p-2 w-full" value={teacherId} onChange={(e) => setTeacherId(Number(e.target.value))}>
+        <select
+          className="border p-2 w-full"
+          value={teacherId}
+          onChange={(e) => setTeacherId(Number(e.target.value))}
+        >
           <option value="">Select</option>
           {teachers.map((t: any) => (
             <option key={t.id} value={t.id}>
@@ -283,6 +312,7 @@ function BranchLabRow({ lab, teachers, rooms, selectedBranchId, existing, onSave
           ))}
         </select>
       </td>
+
       <td className="border border-black p-2">
         <select className="border p-2 w-full" value={roomId} onChange={(e) => setRoomId(Number(e.target.value))}>
           <option value="">Select</option>
@@ -293,32 +323,32 @@ function BranchLabRow({ lab, teachers, rooms, selectedBranchId, existing, onSave
           ))}
         </select>
       </td>
+
       <td className="border border-black p-2 flex gap-2">
-  <button
-    className="px-3 py-2 border border-black"
-    disabled={!selectedBranchId || !teacherId || !roomId}
-    onClick={async () => {
-      if (!selectedBranchId || !teacherId || !roomId) return;
-      await upsertBranchLab(selectedBranchId, lab.id, teacherId as number, roomId as number);
-      await onSaved();
-    }}
-  >
-    Save
-  </button>
+        <button
+          className="px-3 py-2 border border-black"
+          disabled={!selectedBranchId || !teacherId || !roomId}
+          onClick={async () => {
+            if (!selectedBranchId || !teacherId || !roomId) return;
+            await upsertBranchLab(selectedBranchId, lab.id, teacherId as number, roomId as number);
+            await onSaved();
+          }}
+        >
+          Save
+        </button>
 
-  {existing && selectedBranchId && (
-    <button
-      className="px-3 py-2 border border-black"
-      onClick={async () => {
-        await deleteBranchLab(selectedBranchId, lab.id);
-        await onSaved();
-      }}
-    >
-      Remove
-    </button>
-  )}
-</td>
-
+        {existing && selectedBranchId && (
+          <button
+            className="px-3 py-2 border border-black"
+            onClick={async () => {
+              await deleteBranchLab(selectedBranchId, lab.id);
+              await onSaved();
+            }}
+          >
+            Remove
+          </button>
+        )}
+      </td>
     </tr>
   );
 }
@@ -376,37 +406,30 @@ function BranchSubjectRow({ subject, teachers, lectureRooms, selectedBranchId, e
         />
       </td>
       <td className="border border-black p-2 flex gap-2">
-  <button
-    className={`px-3 py-2 border border-black ${ready ? "" : "opacity-50"}`}
-    disabled={!ready}
-    onClick={async () => {
-      if (!selectedBranchId || !teacherId || !lectureRoomId) return;
-      await upsertBranchSubject(
-        selectedBranchId,
-        subject.id,
-        teacherId as number,
-        lectureRoomId as number,
-        lpw
-      );
-      await onSaved();
-    }}
-  >
-    Save
-  </button>
+        <button
+          className={`px-3 py-2 border border-black ${ready ? "" : "opacity-50"}`}
+          disabled={!ready}
+          onClick={async () => {
+            if (!selectedBranchId || !teacherId || !lectureRoomId) return;
+            await upsertBranchSubject(selectedBranchId, subject.id, teacherId as number, lectureRoomId as number, lpw);
+            await onSaved();
+          }}
+        >
+          Save
+        </button>
 
-  {existing && selectedBranchId && (
-    <button
-      className="px-3 py-2 border border-black"
-      onClick={async () => {
-        await deleteBranchSubject(selectedBranchId, subject.id);
-        await onSaved();
-      }}
-    >
-      Remove
-    </button>
-  )}
-</td>
-
+        {existing && selectedBranchId && (
+          <button
+            className="px-3 py-2 border border-black"
+            onClick={async () => {
+              await deleteBranchSubject(selectedBranchId, subject.id);
+              await onSaved();
+            }}
+          >
+            Remove
+          </button>
+        )}
+      </td>
     </tr>
   );
 }
