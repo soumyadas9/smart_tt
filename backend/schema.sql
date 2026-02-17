@@ -75,3 +75,16 @@ CREATE TABLE IF NOT EXISTS branch_lab_batches (
   FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE CASCADE,
   FOREIGN KEY(room_id) REFERENCES lab_rooms(id) ON DELETE CASCADE
 );
+-- Global timetable settings (single row with id=1)
+CREATE TABLE IF NOT EXISTS timetable_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  working_days_count INTEGER NOT NULL DEFAULT 5, -- 5 => Mon-Fri
+  start_time TEXT NOT NULL DEFAULT '08:30',      -- HH:MM
+  end_time TEXT NOT NULL DEFAULT '17:15',        -- HH:MM
+  lunch_start TEXT NOT NULL DEFAULT '12:30',     -- HH:MM
+  lunch_end TEXT NOT NULL DEFAULT '13:15',       -- HH:MM
+  period_minutes INTEGER NOT NULL DEFAULT 60
+);
+
+INSERT OR IGNORE INTO timetable_settings (id) VALUES (1);
+

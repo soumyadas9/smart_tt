@@ -2,34 +2,35 @@ import React from "react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import type { DropResult } from "@hello-pangea/dnd";
 
-const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as const;
+type PeriodLabel = { p: number; label: string; time: string };
 
-const PERIODS = [
-  { p: 1, label: "1", time: "8:30-9:30" },
-  { p: 2, label: "2", time: "9:30-10:30" },
-  { p: 3, label: "3", time: "10:30-11:30" },
-  { p: 4, label: "4", time: "11:30-12:30" },
-  { p: 5, label: "5", time: "1:15-2:15" },
-  { p: 6, label: "6", time: "2:15-3:15" },
-  { p: 7, label: "7", time: "3:15-4:15" },
-  { p: 8, label: "8", time: "4:15-5:15" },
-] as const;
+const DEFAULT_META = {
+  days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+  lunchAfterPeriod: 4,
+  periodLabels: [
+    { p: 1, label: "1", time: "8:30-9:30" },
+    { p: 2, label: "2", time: "9:30-10:30" },
+    { p: 3, label: "3", time: "10:30-11:30" },
+    { p: 4, label: "4", time: "11:30-12:30" },
+    { p: 5, label: "5", time: "1:15-2:15" },
+    { p: 6, label: "6", time: "2:15-3:15" },
+    { p: 7, label: "7", time: "3:15-4:15" },
+    { p: 8, label: "8", time: "4:15-5:15" },
+  ] as PeriodLabel[],
+};
 
 type LabRow = {
   batch: string;
   labShort: string;
   teacher: string;
-  teacherShort?: string; // ✅
+  teacherShort?: string;
   roomShort: string;
   roomFull: string;
 };
 
 type LabBlock = { type: "LAB_BLOCK"; start: number; end: number; batches: LabRow[] };
 type Merged = { type: "MERGED"; into: number };
-
-// ✅ teacherShort optional
 type LectureCell = { type: "LECTURE"; subjectShort: string; teacher: string; teacherShort?: string; room: string };
-
 type Cell = LabBlock | Merged | LectureCell | null;
 
 function isLecture(x: any): x is LectureCell {
@@ -51,12 +52,18 @@ export default function TimetableGrid({
   titleRight,
   subtitleLeft,
   timetable,
+  meta,
   editable = false,
   onMoveCell,
 }: {
   titleRight: string;
   subtitleLeft: string;
   timetable: Record<string, Record<number, Cell>>;
+  meta?: {
+    days: string[];
+    lunchAfterPeriod: number;
+    periodLabels: PeriodLabel[];
+  };
   editable?: boolean;
   onMoveCell?: (args:
     | { kind: "LECTURE"; fromDay: string; fromP: number; toDay: string; toP: number }
@@ -64,6 +71,22 @@ export default function TimetableGrid({
   ) => void | { ok: true } | { ok: false; reason: string };
 }) {
   const [dndError, setDndError] = React.useState<string>("");
+
+  const m = meta || DEFAULT_META;
+  const DAYS = m.days;
+  const PERIODS = m.periodLabels;
+  const lunchAfter = m.lunchAfterPeriod;
+
+  const beforeLunch = PERIODS.filter((x) => x.p <= lunchAfter);
+  const afterLunch = PERIODS.filter((x) => x.p > lunchAfter);
+
+  const gridTemplateColumns = React.useMemo(() => {
+    // Day col + periods + lunch col + periods
+    const dayCol = "80px";
+    const periodCol = "112px";
+    const lunchCol = "90px";
+    return `${dayCol} repeat(${beforeLunch.length}, ${periodCol}) ${lunchCol} repeat(${afterLunch.length}, ${periodCol})`;
+  }, [beforeLunch.length, afterLunch.length]);
 
   function onDragEnd(result: DropResult) {
     if (!editable || !onMoveCell) return;
@@ -109,7 +132,6 @@ export default function TimetableGrid({
         (toCell2 === null || (isMerged(toCell2) && (toCell2 as any).into === targetStartP));
 
       if (isMerged(toCell)) return;
-
       if (!(empty2hOK || existingLabOK)) return;
 
       const res = onMoveCell({
@@ -147,8 +169,10 @@ export default function TimetableGrid({
     const subjectSet = new Set<string>();
     const labSet = new Set<string>();
 
+    const periodNums = PERIODS.map((x) => x.p);
+
     for (const day of DAYS) {
-      for (const p of PERIODS.map((x) => x.p)) {
+      for (const p of periodNums) {
         const cell = timetable?.[day]?.[p];
         if (!cell) continue;
 
@@ -175,7 +199,7 @@ export default function TimetableGrid({
       subjects: Array.from(subjectSet).sort(),
       labs: Array.from(labSet).sort(),
     };
-  }, [timetable]);
+  }, [timetable, DAYS, PERIODS]);
 
   return (
     <div className="paper p-4 print-all">
@@ -203,10 +227,10 @@ export default function TimetableGrid({
         <DragDropContext onDragEnd={onDragEnd}>
           <div className="overflow-x-auto">
             <div className="mt-3 grid-border">
-              <div className="grid" style={{ gridTemplateColumns: "80px repeat(4, 112px) 90px repeat(4, 112px)" }}>
+              <div className="grid" style={{ gridTemplateColumns }}>
                 <div className="grid-border p-2 text-sm font-bold text-center">Day</div>
 
-                {PERIODS.slice(0, 4).map((x) => (
+                {beforeLunch.map((x) => (
                   <div key={x.p} className="grid-border p-2 text-sm font-bold text-center">
                     <div>{x.label}</div>
                     <div className="text-[11px] font-semibold opacity-80">{x.time}</div>
@@ -215,7 +239,7 @@ export default function TimetableGrid({
 
                 <div className="grid-border p-2 text-sm font-bold text-center">LUNCH BREAK</div>
 
-                {PERIODS.slice(4).map((x) => (
+                {afterLunch.map((x) => (
                   <div key={x.p} className="grid-border p-2 text-sm font-bold text-center">
                     <div>{x.label}</div>
                     <div className="text-[11px] font-semibold opacity-80">{x.time}</div>
@@ -224,18 +248,26 @@ export default function TimetableGrid({
               </div>
 
               {DAYS.map((day) => (
-                <div
-                  key={day}
-                  className="grid"
-                  style={{ gridTemplateColumns: "80px repeat(4, 112px) 90px repeat(4, 112px)" }}
-                >
+                <div key={day} className="grid" style={{ gridTemplateColumns }}>
                   <div className="grid-border p-2 text-sm font-bold text-center">{day.slice(0, 2)}</div>
 
-                  {renderPeriodRow({ day, dayData: timetable?.[day] ?? {}, startP: 1, endP: 4, editable })}
+                  {renderPeriodRow({
+                    day,
+                    dayData: timetable?.[day] ?? {},
+                    startP: beforeLunch[0]?.p ?? 1,
+                    endP: beforeLunch[beforeLunch.length - 1]?.p ?? lunchAfter,
+                    editable,
+                  })}
 
                   <div className="grid-border p-2 text-xs text-center font-semibold">Lunch</div>
 
-                  {renderPeriodRow({ day, dayData: timetable?.[day] ?? {}, startP: 5, endP: 8, editable })}
+                  {renderPeriodRow({
+                    day,
+                    dayData: timetable?.[day] ?? {},
+                    startP: afterLunch[0]?.p ?? lunchAfter + 1,
+                    endP: afterLunch[afterLunch.length - 1]?.p ?? lunchAfter + 1,
+                    editable,
+                  })}
                 </div>
               ))}
             </div>
@@ -321,7 +353,6 @@ function CellBox({
 
   const base = "grid-border tt-cell px-2 py-2 text-[12px]";
 
-  // ✅ LECTURE: subject left, teacher short right (like image)
   if (isLecture(cell)) {
     const tShort = (cell.teacherShort || cell.teacher || "").trim();
     return (
@@ -335,7 +366,6 @@ function CellBox({
     );
   }
 
-  // ✅ LAB: lab left, teacher short right per batch row
   if (isLabBlock(cell)) {
     return (
       <div className={`${base} p-0`}>
@@ -390,9 +420,7 @@ function DroppableSlot({
   cell: Cell;
   children: React.ReactNode;
 }) {
-  const dropDisabled =
-    !editable ||
-    (isMerged(cell) && !(cell.into && typeof cell.into === "number"));
+  const dropDisabled = !editable || (isMerged(cell) && !(cell.into && typeof cell.into === "number"));
 
   return (
     <Droppable droppableId={droppableId} isDropDisabled={dropDisabled}>
@@ -409,7 +437,6 @@ function DroppableSlot({
     </Droppable>
   );
 }
-
 
 function renderPeriodRow({
   day,

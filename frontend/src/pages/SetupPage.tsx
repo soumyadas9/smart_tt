@@ -15,6 +15,9 @@ import {
   getBranchLabBatches,
   upsertBranchLabBatch,
   deleteBranchLabBatch,
+  getSettings,
+  updateSettings,
+  type TimetableSettings,
   type Branch,
   type Lab,
   type Teacher,
@@ -59,14 +62,22 @@ export default function SetupPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // ✅ NEW: Schedule Settings (defaults match current hardcoded timetable)
+  const [workingDaysCount, setWorkingDaysCount] = useState<number>(5);
+  const [startTime, setStartTime] = useState("08:30");
+  const [endTime, setEndTime] = useState("17:15");
+  const [lunchStart, setLunchStart] = useState("12:30");
+  const [lunchEnd, setLunchEnd] = useState("13:15");
+
   async function refreshAll() {
-    const [b, l, s, t, lr, lecr] = await Promise.all([
+    const [b, l, s, t, lr, lecr, st] = await Promise.all([
       getBranches(),
       getLabs(),
       getSubjects(),
       getTeachers(),
       getRooms(),
       getLectureRooms(),
+      getSettings(),
     ]);
 
     setBranches(b);
@@ -75,6 +86,15 @@ export default function SetupPage({
     setTeachers(t);
     setLabRooms(lr);
     setLectureRooms(lecr);
+
+    // load persisted settings into UI
+    if (st) {
+      setWorkingDaysCount(st.workingDaysCount ?? 5);
+      setStartTime(st.startTime ?? "08:30");
+      setEndTime(st.endTime ?? "17:15");
+      setLunchStart(st.lunchStart ?? "12:30");
+      setLunchEnd(st.lunchEnd ?? "13:15");
+    }
 
     if (!selectedBranchId && b.length) setSelectedBranchId(b[0].id);
     setSelectedBranchIds((prev) => (prev.length ? prev : []));
@@ -118,8 +138,20 @@ export default function SetupPage({
       setError("Select at least one branch to generate.");
       return;
     }
+
+    // ✅ Save schedule settings to backend first (no parent signature change required)
+    const payload: TimetableSettings = {
+      workingDaysCount,
+      startTime,
+      endTime,
+      lunchStart,
+      lunchEnd,
+      periodMinutes: 60,
+    };
+
     try {
       setBusy(true);
+      await updateSettings(payload);
       await onReadyGenerate(selectedBranchIds, { classStrength, batchSize });
     } catch (e: any) {
       setError(e?.message ?? "Generate failed.");
@@ -153,6 +185,72 @@ export default function SetupPage({
           <div className="mt-1">{error}</div>
         </div>
       )}
+
+      {/* ✅ NEW: Schedule Settings */}
+      <div className="border border-black p-4">
+        <div className="font-bold mb-2">Schedule Settings</div>
+
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-sm">
+          <div>
+            <div className="font-semibold mb-1">Working Days</div>
+            <select
+              className="border p-2 w-full"
+              value={workingDaysCount}
+              onChange={(e) => setWorkingDaysCount(Number(e.target.value))}
+            >
+              {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+                <option key={n} value={n}>
+                  {n} days
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div className="font-semibold mb-1">Start</div>
+            <input
+              className="border p-2 w-full"
+              type="time"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <div className="font-semibold mb-1">End</div>
+            <input
+              className="border p-2 w-full"
+              type="time"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <div className="font-semibold mb-1">Lunch Start</div>
+            <input
+              className="border p-2 w-full"
+              type="time"
+              value={lunchStart}
+              onChange={(e) => setLunchStart(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <div className="font-semibold mb-1">Lunch End</div>
+            <input
+              className="border p-2 w-full"
+              type="time"
+              value={lunchEnd}
+              onChange={(e) => setLunchEnd(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="text-xs opacity-70 mt-2">
+          Period duration is fixed at 60 minutes (same as current).
+        </div>
+      </div>
 
       {/* Branches to generate */}
       <div className="border border-black p-4">
@@ -312,19 +410,17 @@ function BranchLabRow({
   const [useBatch, setUseBatch] = useState(false);
   const [batchMap, setBatchMap] = useState<BatchMap>({});
 
-  // load defaults
   useEffect(() => {
     setTeacherId(existing?.teacher_id ?? "");
     setRoomId(existing?.room_id ?? "");
   }, [existing?.teacher_id, existing?.room_id]);
 
-  // load batch rows from DB into state
   useEffect(() => {
     const map: BatchMap = {};
     for (const b of batches || []) map[b] = { teacherId: "", roomId: "" };
 
     for (const r of existingBatchRows || []) {
-      const b = r.batch; // backend returns "batch"
+      const b = r.batch;
       if (!b) continue;
       map[b] = { teacherId: r.teacher_id ?? "", roomId: r.room_id ?? "" };
     }
@@ -334,7 +430,6 @@ function BranchLabRow({
     setBatchMap(map);
   }, [existingBatchRows, batches]);
 
-  // when user toggles batch ON, prefill missing from default teacher/room
   useEffect(() => {
     if (!useBatch) return;
     setBatchMap((prev) => {
@@ -348,7 +443,6 @@ function BranchLabRow({
     });
   }, [useBatch, batches, teacherId, roomId]);
 
-  // ✅ allow save in batch mode even if default teacher/room not picked
   const canSaveDefault = !!selectedBranchId && !!teacherId && !!roomId;
 
   const canSaveBatch =
@@ -368,7 +462,6 @@ function BranchLabRow({
         </label>
       </td>
 
-      {/* Teacher column */}
       <td className="border border-black p-2 align-top">
         {!useBatch ? (
           <select
@@ -414,7 +507,6 @@ function BranchLabRow({
         )}
       </td>
 
-      {/* Room column */}
       <td className="border border-black p-2 align-top">
         {!useBatch ? (
           <select
@@ -460,7 +552,6 @@ function BranchLabRow({
         )}
       </td>
 
-      {/* Save */}
       <td className="border border-black p-2 align-top">
         <div className="flex gap-2">
           <button
@@ -472,7 +563,6 @@ function BranchLabRow({
               if (!selectedBranchId) return;
 
               try {
-                // ✅ ALWAYS ensure branch_labs is saved (generator depends on it)
                 let fallbackTeacherId = teacherId;
                 let fallbackRoomId = roomId;
 

@@ -30,3 +30,39 @@ def init_db():
         conn.executescript(schema_path.read_text(encoding="utf-8"))
         _ensure_migrations(conn)
         conn.commit()
+
+def get_settings(conn: sqlite3.Connection) -> dict:
+    row = conn.execute("SELECT * FROM timetable_settings WHERE id=1").fetchone()
+    if not row:
+        # fallback defaults (shouldn't happen due to INSERT OR IGNORE)
+        return {
+            "workingDaysCount": 5,
+            "startTime": "08:30",
+            "endTime": "17:15",
+            "lunchStart": "12:30",
+            "lunchEnd": "13:15",
+            "periodMinutes": 60,
+        }
+    return {
+        "workingDaysCount": int(row["working_days_count"]),
+        "startTime": row["start_time"],
+        "endTime": row["end_time"],
+        "lunchStart": row["lunch_start"],
+        "lunchEnd": row["lunch_end"],
+        "periodMinutes": int(row["period_minutes"]),
+    }
+
+
+def upsert_settings(conn: sqlite3.Connection, s: dict) -> None:
+    conn.execute("""
+        INSERT OR REPLACE INTO timetable_settings
+        (id, working_days_count, start_time, end_time, lunch_start, lunch_end, period_minutes)
+        VALUES (1,?,?,?,?,?,?)
+    """, (
+        int(s.get("workingDaysCount", 5)),
+        s.get("startTime", "08:30"),
+        s.get("endTime", "17:15"),
+        s.get("lunchStart", "12:30"),
+        s.get("lunchEnd", "13:15"),
+        int(s.get("periodMinutes", 60)),
+    ))

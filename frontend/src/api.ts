@@ -10,9 +10,35 @@ export type Room = { id: number; code: string; short?: string };
 export type Subject = { id: number; name: string; short: string };
 export type LectureRoom = { id: number; code: string };
 
+export type TimetableSettings = {
+  workingDaysCount: number;
+  startTime: string;   // "HH:MM"
+  endTime: string;     // "HH:MM"
+  lunchStart: string;  // "HH:MM"
+  lunchEnd: string;    // "HH:MM"
+  periodMinutes?: number; // default 60
+};
+
 async function okOrThrow(r: Response, label: string) {
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data?.error || `${label} failed (${r.status})`);
+  if (!r.ok) throw new Error((data as any)?.error || `${label} failed (${r.status})`);
+}
+
+/* --------------------------
+   Settings (NEW)
+-------------------------- */
+export async function getSettings(): Promise<TimetableSettings> {
+  const r = await fetch(`${BASE}/settings`);
+  return r.json();
+}
+
+export async function updateSettings(s: TimetableSettings) {
+  const r = await fetch(`${BASE}/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(s),
+  });
+  await okOrThrow(r, "Update settings");
 }
 
 /* --------------------------
@@ -146,14 +172,13 @@ export async function createLab(name: string, short: string) {
 }
 
 /* --------------------------
-   Teachers (UPDATED)
+   Teachers
 -------------------------- */
 export async function getTeachers(): Promise<Teacher[]> {
   const r = await fetch(`${BASE}/teachers`);
   return r.json();
 }
 
-// ✅ UPDATED: send short as well
 export async function createTeacher(name: string, short: string) {
   const r = await fetch(`${BASE}/teachers`, {
     method: "POST",
@@ -240,6 +265,7 @@ export async function deleteBranchLabBatch(branchId: number, labId: number, batc
 
 /* --------------------------
    Generate endpoints
+   NOTE: unchanged signature to avoid breaking parent code
 -------------------------- */
 export async function generateLabsOnly(
   branchIds: number[],
@@ -272,6 +298,6 @@ export async function generateFull(
   });
 
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data?.error || `Generate failed (${r.status})`);
+  if (!r.ok) throw new Error((data as any)?.error || `Generate failed (${r.status})`);
   return data;
 }

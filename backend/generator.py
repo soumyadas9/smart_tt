@@ -4,9 +4,10 @@ import random
 import math
 from collections import defaultdict
 
-DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-PERIODS = [1, 2, 3, 4, 5, 6, 7, 8]
-LAB_STARTS = [1, 3, 5, 7]  # 2-hour blocks: (1-2), (3-4), (5-6), (7-8)
+# Default fallbacks (same behavior as before)
+DEFAULT_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+DEFAULT_PERIODS = [1, 2, 3, 4, 5, 6, 7, 8]
+DEFAULT_LAB_STARTS = [1, 3, 5, 7]
 BATCHES = ["B1", "B2", "B3", "B4"]
 
 
@@ -30,6 +31,129 @@ class SubjectConfig:
   lectures_per_week: int
 
 
+# ----------------------------
+# Schedule helpers (dynamic days/periods/lunch)
+# ----------------------------
+def _hm_to_min(hm: str) -> int:
+  h, m = hm.split(":")
+  return int(h) * 60 + int(m)
+
+
+def _min_to_hm(x: int) -> str:
+  h = x // 60
+  m = x % 60
+  return f"{h:02d}:{m:02d}"
+
+
+def build_schedule(settings: dict) -> dict:
+  """
+  Builds timetable schedule config from settings.
+
+  Defaults are set to match your current hardcoded UI:
+  - Mon-Fri
+  - Start 08:30
+  - Lunch 12:30-13:15
+  - End 17:15
+  - Period length 60 minutes
+  """
+  working_days_count = int(settings.get("workingDaysCount", 5))
+  start_time = settings.get("startTime", "08:30")
+  end_time = settings.get("endTime", "17:15")
+  lunch_start = settings.get("lunchStart", "12:30")
+  lunch_end = settings.get("lunchEnd", "13:15")
+  period_minutes = int(settings.get("periodMinutes", 60))
+
+  all_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+  days = all_days[:max(1, min(working_days_count, 7))]
+
+  s = _hm_to_min(start_time)
+  e = _hm_to_min(end_time)
+  ls = _hm_to_min(lunch_start)
+  le = _hm_to_min(lunch_end)
+
+  if not (s < ls < le < e):
+    raise ValueError("Invalid timings: must satisfy start < lunchStart < lunchEnd < end")
+
+  # periods before lunch and after lunch must align to period size
+  if (ls - s) % period_minutes != 0 or (e - le) % period_minutes != 0:
+    raise ValueError("Timings must align with periodMinutes (default 60).")
+
+  before = (ls - s) // period_minutes
+  after = (e - le) // period_minutes
+
+  if before < 1 or after < 1:
+    raise ValueError("Need at least 1 period before and after lunch.")
+
+  total = before + after
+  periods = list(range(1, total + 1))
+  lunch_after_period = before  # lunch column is after this period number
+
+  # Build labels (time ranges) for each period number
+  period_labels = []
+  cur = s
+  for i in range(1, before + 1):
+    nxt = cur + period_minutes
+    period_labels.append({"p": i, "label": str(i), "time": f"{_min_to_hm(cur)}-{_min_to_hm(nxt)}"})
+    cur = nxt
+
+  cur = le
+  for i in range(before + 1, total + 1):
+    nxt = cur + period_minutes
+    period_labels.append({"p": i, "label": str(i), "time": f"{_min_to_hm(cur)}-{_min_to_hm(nxt)}"})
+    cur = nxt
+
+  # lab starts: 2-hour blocks; cannot cross lunch boundary; prefer odd starts like before
+  lab_starts = []
+  for p in periods:
+    if p + 1 not in periods:
+      continue
+    if p == lunch_after_period:
+      continue  # would cross lunch
+    if p % 2 == 1:
+      lab_starts.append(p)
+
+  return {
+    "days": days,
+    "periods": periods,
+    "lab_starts": lab_starts,
+    "lunchAfterPeriod": lunch_after_period,
+    "periodMinutes": period_minutes,
+    "startTime": start_time,
+    "endTime": end_time,
+    "lunchStart": lunch_start,
+    "lunchEnd": lunch_end,
+    "periodLabels": period_labels,
+  }
+
+
+def _defaults_schedule() -> dict:
+  # fallback schedule that matches old behavior
+  return {
+    "days": DEFAULT_DAYS,
+    "periods": DEFAULT_PERIODS,
+    "lab_starts": DEFAULT_LAB_STARTS,
+    "lunchAfterPeriod": 4,
+    "periodMinutes": 60,
+    "startTime": "08:30",
+    "endTime": "17:15",
+    "lunchStart": "12:30",
+    "lunchEnd": "13:15",
+    "periodLabels": [
+      {"p": 1, "label": "1", "time": "08:30-09:30"},
+      {"p": 2, "label": "2", "time": "09:30-10:30"},
+      {"p": 3, "label": "3", "time": "10:30-11:30"},
+      {"p": 4, "label": "4", "time": "11:30-12:30"},
+      {"p": 5, "label": "5", "time": "13:15-14:15"},
+      {"p": 6, "label": "6", "time": "14:15-15:15"},
+      {"p": 7, "label": "7", "time": "15:15-16:15"},
+      {"p": 8, "label": "8", "time": "16:15-17:15"},
+    ],
+  }
+
+
+# ----------------------------
+# Existing logic (now schedule-aware)
+# ----------------------------
 def make_batches(class_strength: int, batch_size: int = 20) -> List[str]:
   if class_strength <= 0:
     return ["B1", "B2", "B3", "B4"]
@@ -37,24 +161,30 @@ def make_batches(class_strength: int, batch_size: int = 20) -> List[str]:
   return [f"B{i}" for i in range(1, n + 1)]
 
 
-def build_balanced_lab_slots() -> List[Tuple[str, int]]:
+def build_balanced_lab_slots(days: List[str], lab_starts: List[int]) -> List[Tuple[str, int]]:
   slots: List[Tuple[str, int]] = []
-  for start in LAB_STARTS:
-    for day in DAYS:
+  for start in lab_starts:
+    for day in days:
       slots.append((day, start))
   return slots
 
 
-def empty_grid() -> Dict[str, Dict[int, Any]]:
-  return {d: {p: None for p in PERIODS} for d in DAYS}
+def empty_grid(days: List[str], periods: List[int]) -> Dict[str, Dict[int, Any]]:
+  return {d: {p: None for p in periods} for d in days}
 
 
 def generate_labs_only_timetable(
   branch_name: str,
   labs: List[LabConfig],
   teacher_busy_global: Optional[set] = None,
-  batches: Optional[List[str]] = None
+  batches: Optional[List[str]] = None,
+  schedule: Optional[dict] = None
 ) -> Dict[str, Any]:
+
+  schedule = schedule or _defaults_schedule()
+  days = schedule["days"]
+  periods = schedule["periods"]
+  lab_starts = schedule["lab_starts"]
 
   if teacher_busy_global is None:
     teacher_busy_global = set()
@@ -62,19 +192,17 @@ def generate_labs_only_timetable(
   batches = batches or BATCHES
   nb = len(batches)
 
-  timetable = empty_grid()
+  timetable = empty_grid(days, periods)
 
   if not labs:
-    return {"branch": branch_name, "timetable": timetable}
+    return {"branch": branch_name, "timetable": timetable, "meta": schedule}
 
   m = len(labs)
 
-  # ✅ KEY FIX:
-  # If m < nb, you MUST schedule nb blocks, not m blocks,
-  # otherwise every batch will lose one lab due to "FREE" slots.
+  # ✅ KEY FIX retained
   total_blocks_needed = max(m, nb)
 
-  all_slots = build_balanced_lab_slots()
+  all_slots = build_balanced_lab_slots(days, lab_starts)
   random.shuffle(all_slots)
 
   placed_blocks = 0
@@ -85,25 +213,18 @@ def generate_labs_only_timetable(
     slot_idx += 1
     end = start + 1
 
+    # ensure end exists in periods (safety)
+    if end not in periods:
+      continue
+
     batch_rows = []
     teachers_in_block = set()
 
-    # ✅ Rotation + FREE logic that guarantees:
-    # - each batch attends every lab at least once
-    # - FREE still appears when labs < batches
-    #
-    # Case A: m < nb => use nb positions (some positions are FREE)
-    # Case B: m >= nb => no FREE needed, rotate through m labs
     for b_index, batch in enumerate(batches):
       if m < nb:
-        # positions 0..nb-1, labs occupy 0..m-1, rest FREE
         pos = (placed_blocks + b_index) % nb
-        if pos < m:
-          lab = labs[pos]
-        else:
-          lab = None
+        lab = labs[pos] if pos < m else None
       else:
-        # m >= nb: everyone gets a lab each block, rotate across m labs
         lab_idx = (placed_blocks + b_index) % m
         lab = labs[lab_idx]
 
@@ -133,7 +254,7 @@ def generate_labs_only_timetable(
       if teacher:
         teachers_in_block.add(teacher)
 
-    # ✅ Teacher clash check (both hours)
+    # Teacher clash check (both hours)
     clash = any(
       (day, start, t) in teacher_busy_global or (day, end, t) in teacher_busy_global
       for t in teachers_in_block
@@ -157,12 +278,12 @@ def generate_labs_only_timetable(
       f"Placed {placed_blocks}/{total_blocks_needed}."
     )
 
-  return {"branch": branch_name, "timetable": timetable}
+  return {"branch": branch_name, "timetable": timetable, "meta": schedule}
 
 
-def _teacher_load_on_day(tt, day: str, teacher: str) -> int:
+def _teacher_load_on_day(tt, day: str, teacher: str, periods: List[int]) -> int:
   c = 0
-  for p in PERIODS:
+  for p in periods:
     cell = tt[day].get(p)
     if not cell:
       continue
@@ -192,11 +313,21 @@ def _choose_best_slot_for_lecture(
   teacher: str,
   room: str,
   subj_day_counts: Dict[str, Dict[str, int]],
+  days: List[str],
+  periods: List[int],
 ) -> Optional[Tuple[str, int]]:
   candidates: List[Tuple[float, str, int]] = []
 
-  for day in DAYS:
-    for p in PERIODS:
+  # dynamic early-penalty: earlier slightly better, later worse
+  # keep similar behavior to your previous table, but generalized
+  def early_penalty(p: int) -> float:
+    # if up to 8, mimic old-ish bias; otherwise gentle slope
+    if p <= 4:
+      return 0.2 * (p - 1)
+    return 0.6 + 0.4 * (p - 4)
+
+  for day in days:
+    for p in periods:
       if tt[day][p] is not None:
         continue
 
@@ -206,18 +337,16 @@ def _choose_best_slot_for_lecture(
         continue
 
       score = 0.0
-      early_penalty = {1: 0, 2: 0.2, 3: 0.4, 4: 0.6, 5: 2.0, 6: 2.4, 7: 2.8, 8: 3.2}
-      score += early_penalty.get(p, 3.0)
+      score += early_penalty(p)
 
       score += 5 * subj_day_counts[subj_short].get(day, 0)
 
       if _adjacent_same_subject(tt, day, p, subj_short):
         score += 3
 
-      score += 0.5 * _teacher_load_on_day(tt, day, teacher)
+      score += 0.5 * _teacher_load_on_day(tt, day, teacher, periods)
 
       score += random.random() * 0.05
-
       candidates.append((score, day, p))
 
   if not candidates:
@@ -233,8 +362,13 @@ def generate_full_timetable(
   subjects: List[SubjectConfig],
   teacher_busy_global: Optional[set] = None,
   room_busy_global: Optional[set] = None,
-  batches: Optional[List[str]] = None
+  batches: Optional[List[str]] = None,
+  schedule: Optional[dict] = None
 ) -> Dict[str, Any]:
+
+  schedule = schedule or _defaults_schedule()
+  days = schedule["days"]
+  periods = schedule["periods"]
 
   if teacher_busy_global is None:
     teacher_busy_global = set()
@@ -242,15 +376,15 @@ def generate_full_timetable(
     room_busy_global = set()
 
   if not labs:
-    out = {"branch": branch_name, "timetable": empty_grid()}
+    out = {"branch": branch_name, "timetable": empty_grid(days, periods), "meta": schedule}
   else:
-    out = generate_labs_only_timetable(branch_name, labs, teacher_busy_global, batches=batches)
+    out = generate_labs_only_timetable(branch_name, labs, teacher_busy_global, batches=batches, schedule=schedule)
 
   tt = out["timetable"]
 
   # mark room busy for labs too
-  for day in DAYS:
-    for p in PERIODS:
+  for day in days:
+    for p in periods:
       cell = tt[day][p]
       if cell and cell.get("type") == "LAB_BLOCK":
         start = int(cell.get("start", p))
@@ -278,7 +412,9 @@ def generate_full_timetable(
     slot = _choose_best_slot_for_lecture(
       tt, teacher_busy_global, room_busy_global,
       subj_short, teacher_name, room_code,
-      subj_day_counts
+      subj_day_counts,
+      days=days,
+      periods=periods
     )
     if slot is None:
       raise ValueError(f"Could not place all lectures (stuck) for {subj_short} in {branch_name}.")
@@ -299,12 +435,16 @@ def generate_full_timetable(
 
 
 def build_teacher_view(branch_output: Dict[str, Any]) -> Dict[str, Any]:
+  meta = branch_output.get("meta") or _defaults_schedule()
+  days = meta["days"]
+  periods = meta["periods"]
+
   teacher_view: Dict[str, Dict[str, Dict[int, List[Dict[str, Any]]]]] = {}
   branch = branch_output["branch"]
   tt = branch_output["timetable"]
 
-  for day in DAYS:
-    for p in PERIODS:
+  for day in days:
+    for p in periods:
       cell = tt[day][p]
       if not cell:
         continue
@@ -314,7 +454,7 @@ def build_teacher_view(branch_output: Dict[str, Any]) -> Dict[str, Any]:
           t = row["teacher"]
           if not t:
             continue
-          teacher_view.setdefault(t, {d: {pp: [] for pp in PERIODS} for d in DAYS})
+          teacher_view.setdefault(t, {d: {pp: [] for pp in periods} for d in days})
           teacher_view[t][day][p].append({
             "branch": branch,
             "type": "LAB",
@@ -325,7 +465,7 @@ def build_teacher_view(branch_output: Dict[str, Any]) -> Dict[str, Any]:
 
       elif cell.get("type") == "LECTURE":
         t = cell["teacher"]
-        teacher_view.setdefault(t, {d: {pp: [] for pp in PERIODS} for d in DAYS})
+        teacher_view.setdefault(t, {d: {pp: [] for pp in periods} for d in days})
         teacher_view[t][day][p].append({
           "branch": branch,
           "type": "LECTURE",
@@ -333,16 +473,20 @@ def build_teacher_view(branch_output: Dict[str, Any]) -> Dict[str, Any]:
           "room": cell["room"],
         })
 
-  return {"teachers": teacher_view}
+  return {"teachers": teacher_view, "meta": meta}
 
 
 def build_room_view(branch_output: Dict[str, Any]) -> Dict[str, Any]:
+  meta = branch_output.get("meta") or _defaults_schedule()
+  days = meta["days"]
+  periods = meta["periods"]
+
   room_view: Dict[str, Dict[str, Dict[int, List[Dict[str, Any]]]]] = {}
   branch = branch_output["branch"]
   tt = branch_output["timetable"]
 
-  for day in DAYS:
-    for p in PERIODS:
+  for day in days:
+    for p in periods:
       cell = tt[day][p]
       if not cell:
         continue
@@ -352,7 +496,7 @@ def build_room_view(branch_output: Dict[str, Any]) -> Dict[str, Any]:
           r = row["roomFull"]
           if not r:
             continue
-          room_view.setdefault(r, {d: {pp: [] for pp in PERIODS} for d in DAYS})
+          room_view.setdefault(r, {d: {pp: [] for pp in periods} for d in days})
           room_view[r][day][p].append({
             "branch": branch,
             "type": "LAB",
@@ -363,7 +507,7 @@ def build_room_view(branch_output: Dict[str, Any]) -> Dict[str, Any]:
 
       elif cell.get("type") == "LECTURE":
         r = cell["room"]
-        room_view.setdefault(r, {d: {pp: [] for pp in PERIODS} for d in DAYS})
+        room_view.setdefault(r, {d: {pp: [] for pp in periods} for d in days})
         room_view[r][day][p].append({
           "branch": branch,
           "type": "LECTURE",
@@ -371,4 +515,4 @@ def build_room_view(branch_output: Dict[str, Any]) -> Dict[str, Any]:
           "teacher": cell["teacher"],
         })
 
-  return {"rooms": room_view}
+  return {"rooms": room_view, "meta": meta}

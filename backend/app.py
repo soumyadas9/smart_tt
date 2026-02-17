@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-from db import init_db, get_conn
+from db import init_db, get_conn, get_settings, upsert_settings
 from generator import (
   generate_labs_only_timetable,
   generate_full_timetable,
@@ -9,18 +9,17 @@ from generator import (
   build_room_view,
   LabConfig,
   SubjectConfig,
-  make_batches
+  make_batches,
+  build_schedule
 )
 
 app = Flask(__name__)
 CORS(app)
 
-DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-
 
 @app.get("/")
 def home():
-  return {"message": "Backend running. Try /health, /branches, /labs, /teachers, /rooms"}
+  return {"message": "Backend running. Try /health, /branches, /labs, /teachers, /rooms, /settings"}
 
 
 @app.get("/health")
@@ -32,6 +31,24 @@ def health():
 def init():
   init_db()
   return {"ok": True}
+
+
+# ----------------------------
+# Settings (NEW)
+# ----------------------------
+@app.get("/settings")
+def api_get_settings():
+  with get_conn() as conn:
+    return jsonify(get_settings(conn))
+
+
+@app.put("/settings")
+def api_update_settings():
+  data = request.json or {}
+  with get_conn() as conn:
+    upsert_settings(conn, data)
+    conn.commit()
+  return jsonify({"ok": True})
 
 
 # ----------------------------
@@ -251,7 +268,7 @@ def delete_lab(lab_id: int):
 
 
 # ----------------------------
-# Teachers (UPDATED: includes short)
+# Teachers
 # ----------------------------
 @app.get("/teachers")
 def teachers():
@@ -269,7 +286,6 @@ def create_teacher():
   if not name:
     return {"error": "Teacher name required"}, 400
   if not short:
-    # fallback: auto short = name (but UI should send it)
     short = name
 
   with get_conn() as conn:
@@ -462,7 +478,7 @@ def _load_per_batch_map(conn, branch_id: int):
 # ----------------------------
 @app.post("/generate/labs-only")
 def generate_labs_only():
-  data = request.json
+  data = request.json or {}
   branch_ids = data.get("branchIds", [])
   class_strength = int(data.get("classStrength", 80))
   batch_size = int(data.get("batchSize", 20))
@@ -477,6 +493,12 @@ def generate_labs_only():
 
   with get_conn() as conn:
     teacher_short_map = _get_teacher_short_map(conn)
+
+    # read persisted settings and build schedule
+    st = get_settings(conn)
+    schedule = build_schedule(st)
+    days = schedule["days"]
+    periods = schedule["periods"]
 
     for bid in branch_ids:
       b = conn.execute("SELECT id, name FROM branches WHERE id=?", (bid,)).fetchone()
@@ -506,9 +528,8 @@ def generate_labs_only():
         per_batch=per_batch_map.get(r["lab_id"], {})
       ) for r in rows]
 
-      branch_output = generate_labs_only_timetable(b["name"], labs_cfg, batches=batches)
+      branch_output = generate_labs_only_timetable(b["name"], labs_cfg, batches=batches, schedule=schedule)
 
-      # ✅ inject teacherShort into timetable JSON
       _inject_teacher_shorts(branch_output, teacher_short_map)
 
       outputs.append(branch_output)
@@ -517,18 +538,18 @@ def generate_labs_only():
       rv = build_room_view(branch_output)["rooms"]
 
       for tname, grid in tv.items():
-        teachers_accum.setdefault(tname, {d: {pp: [] for pp in range(1, 9)} for d in DAYS})
+        teachers_accum.setdefault(tname, {d: {pp: [] for pp in periods} for d in days})
         for day in grid:
           for p in grid[day]:
             teachers_accum[tname][day][p] += grid[day][p]
 
       for rcode, grid in rv.items():
-        rooms_accum.setdefault(rcode, {d: {pp: [] for pp in range(1, 9)} for d in DAYS})
+        rooms_accum.setdefault(rcode, {d: {pp: [] for pp in periods} for d in days})
         for day in grid:
           for p in grid[day]:
             rooms_accum[rcode][day][p] += grid[day][p]
 
-  return jsonify({"branches": outputs, "teacherView": teachers_accum, "roomView": rooms_accum})
+  return jsonify({"meta": schedule, "branches": outputs, "teacherView": teachers_accum, "roomView": rooms_accum})
 
 
 # ----------------------------
@@ -536,7 +557,7 @@ def generate_labs_only():
 # ----------------------------
 @app.post("/generate/full")
 def generate_full():
-  data = request.json
+  data = request.json or {}
   branch_ids = data.get("branchIds", [])
   class_strength = int(data.get("classStrength", 80))
   batch_size = int(data.get("batchSize", 20))
@@ -554,6 +575,11 @@ def generate_full():
 
   with get_conn() as conn:
     teacher_short_map = _get_teacher_short_map(conn)
+
+    st = get_settings(conn)
+    schedule = build_schedule(st)
+    days = schedule["days"]
+    periods = schedule["periods"]
 
     for bid in branch_ids:
       b = conn.execute("SELECT id, name FROM branches WHERE id=?", (bid,)).fetchone()
@@ -609,12 +635,12 @@ def generate_full():
           b["name"], labs_cfg, subjects_cfg,
           teacher_busy_global=teacher_busy_global,
           room_busy_global=room_busy_global,
-          batches=batches
+          batches=batches,
+          schedule=schedule
         )
       except ValueError as e:
         return jsonify({"error": str(e), "branch": b["name"]}), 400
 
-      # ✅ inject teacherShort into timetable JSON
       _inject_teacher_shorts(branch_output, teacher_short_map)
 
       outputs.append(branch_output)
@@ -623,18 +649,18 @@ def generate_full():
       rv = build_room_view(branch_output)["rooms"]
 
       for tname, grid in tv.items():
-        teachers_accum.setdefault(tname, {d: {pp: [] for pp in range(1, 9)} for d in DAYS})
+        teachers_accum.setdefault(tname, {d: {pp: [] for pp in periods} for d in days})
         for day in grid:
           for p in grid[day]:
             teachers_accum[tname][day][p] += grid[day][p]
 
       for rcode, grid in rv.items():
-        rooms_accum.setdefault(rcode, {d: {pp: [] for pp in range(1, 9)} for d in DAYS})
+        rooms_accum.setdefault(rcode, {d: {pp: [] for pp in periods} for d in days})
         for day in grid:
           for p in grid[day]:
             rooms_accum[rcode][day][p] += grid[day][p]
 
-  return jsonify({"branches": outputs, "teacherView": teachers_accum, "roomView": rooms_accum})
+  return jsonify({"meta": schedule, "branches": outputs, "teacherView": teachers_accum, "roomView": rooms_accum})
 
 
 if __name__ == "__main__":
