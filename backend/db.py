@@ -17,9 +17,16 @@ def _ensure_migrations(conn: sqlite3.Connection):
         # backfill: if short empty, set to code
         conn.execute("UPDATE lab_rooms SET short = code WHERE short IS NULL OR short = '';")
 
+    # --- Migration 2: teachers.short column ---
+    tcols = [r["name"] for r in conn.execute("PRAGMA table_info(teachers)").fetchall()]
+    if "short" not in tcols:
+        conn.execute("ALTER TABLE teachers ADD COLUMN short TEXT;")
+        # backfill with empty string so your SELECT doesn't crash
+        conn.execute("UPDATE teachers SET short = '' WHERE short IS NULL;")
+
 def init_db():
     schema_path = Path(__file__).with_name("schema.sql")
     with get_conn() as conn:
         conn.executescript(schema_path.read_text(encoding="utf-8"))
-        _ensure_migrations(conn)   # ✅ add this
+        _ensure_migrations(conn)
         conn.commit()

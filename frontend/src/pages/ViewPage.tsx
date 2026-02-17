@@ -449,7 +449,7 @@ if (kind === "LAB_ROW") {
       </div>
 
       {/* ✅ Manual toggle shown only in Student View (because drag-drop is inside TimetableGrid) */}
-      {tab === "Student View" && (
+      {(tab === "Student View" || tab === "Master View") && (
   <div className="flex items-center gap-3">
     <button
       onClick={() => setManualEnabled((v) => !v)}
@@ -470,17 +470,10 @@ if (kind === "LAB_ROW") {
     >
       Save Changes
     </button>
-    <button
-  className="px-3 py-2 border border-black text-sm no-print"
-  onClick={() => window.print()}
->
-  Export PDF
-</button>
 
-
-    <div className="text-sm opacity-70">
-     
-    </div>
+    <button className="px-3 py-2 border border-black text-sm no-print" onClick={() => window.print()}>
+      Export PDF
+    </button>
   </div>
 )}
 
@@ -564,8 +557,25 @@ if (kind === "LAB_ROW") {
       )}
       {/* ✅ ADDED MASTER VIEW RENDER */}
       {tab === "Master View" && (
-        <MasterTimetableView branches={branchesState} />
-      )}
+  <MasterTimetableView
+    branches={branchesState}
+    editable={manualEnabled}
+    onMove={(args) => {
+      const res = moveCell(
+        args.branch,
+        args.kind,
+        args.fromDay,
+        args.fromP,
+        args.toDay,
+        args.toP,
+        args.batch
+      );
+      if (!res.ok) alert(res.reason);
+    }}
+  />
+)}
+
+
 
     </div>
   );

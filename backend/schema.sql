@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS branches (
 
 CREATE TABLE IF NOT EXISTS teachers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT UNIQUE NOT NULL
+  name TEXT UNIQUE NOT NULL,
+  short TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS lab_rooms (
@@ -58,4 +59,19 @@ CREATE TABLE IF NOT EXISTS branch_subjects (
   FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
   FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE CASCADE,
   FOREIGN KEY(lecture_room_id) REFERENCES lecture_rooms(id) ON DELETE CASCADE
+);
+
+-- NEW: batch-wise lab configuration (teacher + room per lab per branch per batch)
+CREATE TABLE IF NOT EXISTS branch_lab_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  branch_id INTEGER NOT NULL,
+  lab_id INTEGER NOT NULL,
+  batch TEXT NOT NULL,              -- e.g. "B1", "B2", ...
+  teacher_id INTEGER NOT NULL,
+  room_id INTEGER NOT NULL,
+  UNIQUE(branch_id, lab_id, batch),
+  FOREIGN KEY(branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+  FOREIGN KEY(lab_id) REFERENCES labs(id) ON DELETE CASCADE,
+  FOREIGN KEY(teacher_id) REFERENCES teachers(id) ON DELETE CASCADE,
+  FOREIGN KEY(room_id) REFERENCES lab_rooms(id) ON DELETE CASCADE
 );

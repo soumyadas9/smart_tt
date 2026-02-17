@@ -19,13 +19,17 @@ type LabRow = {
   batch: string;
   labShort: string;
   teacher: string;
+  teacherShort?: string; // ✅
   roomShort: string;
   roomFull: string;
 };
 
 type LabBlock = { type: "LAB_BLOCK"; start: number; end: number; batches: LabRow[] };
 type Merged = { type: "MERGED"; into: number };
-type LectureCell = { type: "LECTURE"; subjectShort: string; teacher: string; room: string };
+
+// ✅ teacherShort optional
+type LectureCell = { type: "LECTURE"; subjectShort: string; teacher: string; teacherShort?: string; room: string };
+
 type Cell = LabBlock | Merged | LectureCell | null;
 
 function isLecture(x: any): x is LectureCell {
@@ -67,7 +71,6 @@ export default function TimetableGrid({
     const { source, destination, draggableId } = result;
     if (!destination) return;
 
-    // droppableId format: "Monday-3"
     const [fromDay, fromPStr] = source.droppableId.split("-");
     const [toDay, toPStr] = destination.droppableId.split("-");
 
@@ -80,53 +83,43 @@ export default function TimetableGrid({
     const fromCell = timetable?.[fromDay]?.[fromP] ?? null;
     if (!fromCell) return;
 
-    // Determine what is being dragged
     type DragKind = "LECTURE" | "LAB_ROW";
     const kind: DragKind = draggableId.startsWith("labrow-") ? "LAB_ROW" : "LECTURE";
 
-    // ----------------------------
-    // LAB ROW DRAG (INDIVIDUAL BATCH)
-    // ----------------------------
+    // LAB ROW DRAG
     if (kind === "LAB_ROW") {
-      // draggableId format: labrow-Monday-1-B3
       const parts = draggableId.split("-");
-      const batch = parts[3]; // "B1"/"B2"/"B3"/"B4"
+      const batch = parts[3];
 
-      // source must be a LAB_BLOCK start slot
       if (!isLabBlock(fromCell)) return;
-      if (fromP % 2 === 0) return; // only start slots 1,3,5,7
+      if (fromP % 2 === 0) return;
 
-      // ✅ snap drop to lab start slot
-const targetStartP = toP % 2 === 0 ? toP - 1 : toP;
-if (targetStartP < 1) return; // safety
+      const targetStartP = toP % 2 === 0 ? toP - 1 : toP;
+      if (targetStartP < 1) return;
 
-const toCell = timetable?.[toDay]?.[targetStartP] ?? null;
-const toCell2 = timetable?.[toDay]?.[targetStartP + 1] ?? null;
+      const toCell = timetable?.[toDay]?.[targetStartP] ?? null;
+      const toCell2 = timetable?.[toDay]?.[targetStartP + 1] ?? null;
 
-// Disallow dropping onto lectures
-if (isLecture(toCell) || isLecture(toCell2)) return;
+      if (isLecture(toCell) || isLecture(toCell2)) return;
 
-// If target is empty 2-hour slot → ok only if BOTH null
-const empty2hOK = toCell === null && toCell2 === null;
+      const empty2hOK = toCell === null && toCell2 === null;
 
-// If target is an existing LAB_BLOCK at start → allow even though next is MERGED
-const existingLabOK =
-  isLabBlock(toCell) &&
-  (toCell2 === null || (isMerged(toCell2) && (toCell2 as any).into === targetStartP));
+      const existingLabOK =
+        isLabBlock(toCell) &&
+        (toCell2 === null || (isMerged(toCell2) && (toCell2 as any).into === targetStartP));
 
-// If target is merged slot itself → not allowed
-if (isMerged(toCell)) return;
+      if (isMerged(toCell)) return;
 
-if (!(empty2hOK || existingLabOK)) return;
+      if (!(empty2hOK || existingLabOK)) return;
 
-const res = onMoveCell({
-  kind: "LAB_ROW",
-  fromDay,
-  fromP,
-  toDay,
-  toP: targetStartP,   // ✅ IMPORTANT: use snapped start
-  batch,
-});
+      const res = onMoveCell({
+        kind: "LAB_ROW",
+        fromDay,
+        fromP,
+        toDay,
+        toP: targetStartP,
+        batch,
+      });
 
       if (res && (res as any).ok === false) {
         setDndError((res as any).reason || "Move blocked.");
@@ -134,15 +127,12 @@ const res = onMoveCell({
       return;
     }
 
-    // ----------------------------
-    // LECTURE DRAG (AS-IS)
-    // ----------------------------
+    // LECTURE DRAG
     if (!isLecture(fromCell)) return;
 
     const toCell = timetable?.[toDay]?.[toP] ?? null;
     if (isMerged(toCell) || isLabBlock(toCell)) return;
 
-    // allow swap lecture <-> lecture OR move into empty
     if (toCell && !isLecture(toCell)) return;
 
     const res = onMoveCell({ kind: "LECTURE", fromDay, fromP, toDay, toP });
@@ -151,7 +141,6 @@ const res = onMoveCell({
     }
   }
 
-  // ✅ Footer lists (unique values used in this timetable)
   const footerInfo = React.useMemo(() => {
     const teacherSet = new Set<string>();
     const roomSet = new Set<string>();
@@ -202,9 +191,7 @@ const res = onMoveCell({
         </div>
       )}
 
-      {/* ✅ this wrapper is what scales for print */}
       <div className="tt-print-scale">
-        {/* Top header */}
         <div className="text-center">
           <div className="text-xl header-bold">USHA MITTAL INSTITUTE OF TECHNOLOGY</div>
           <div className="text-xs mt-1 flex justify-between">
@@ -214,10 +201,8 @@ const res = onMoveCell({
         </div>
 
         <DragDropContext onDragEnd={onDragEnd}>
-          {/* Main grid */}
           <div className="overflow-x-auto">
             <div className="mt-3 grid-border">
-              {/* header row */}
               <div className="grid" style={{ gridTemplateColumns: "80px repeat(4, 112px) 90px repeat(4, 112px)" }}>
                 <div className="grid-border p-2 text-sm font-bold text-center">Day</div>
 
@@ -238,7 +223,6 @@ const res = onMoveCell({
                 ))}
               </div>
 
-              {/* day rows */}
               {DAYS.map((day) => (
                 <div
                   key={day}
@@ -258,7 +242,6 @@ const res = onMoveCell({
           </div>
         </DragDropContext>
 
-        {/* ✅ Reference-style footer lists */}
         <div className="mt-4 grid grid-cols-3 gap-4 text-[11px]">
           <div>
             <div className="font-bold mb-1">Teachers:</div>
@@ -286,7 +269,6 @@ const res = onMoveCell({
             <div className="font-bold mb-1">Subjects / Labs:</div>
 
             <div className="grid grid-cols-2 gap-3">
-              {/* Subjects column */}
               <div>
                 <div className="font-semibold mb-1">Subjects</div>
                 <div className="space-y-0.5">
@@ -298,7 +280,6 @@ const res = onMoveCell({
                 </div>
               </div>
 
-              {/* Labs column */}
               <div>
                 <div className="font-semibold mb-1">Labs</div>
                 <div className="space-y-0.5">
@@ -313,7 +294,6 @@ const res = onMoveCell({
           </div>
         </div>
 
-        {/* bottom signatures */}
         <div className="mt-3 grid grid-cols-3 text-xs">
           <div className="text-center font-semibold">Time Table Incharge</div>
           <div className="text-center font-semibold">Principal</div>
@@ -335,51 +315,62 @@ function CellBox({
   p: number;
   editable: boolean;
 }) {
-  // merged cell: visually empty but MUST keep same height
   if (isMerged(cell)) {
     return <div className="grid-border tt-cell" />;
   }
 
   const base = "grid-border tt-cell px-2 py-2 text-[12px]";
 
+  // ✅ LECTURE: subject left, teacher short right (like image)
   if (isLecture(cell)) {
+    const tShort = (cell.teacherShort || cell.teacher || "").trim();
     return (
       <div className={`${base} flex flex-col justify-center`}>
-        <div className="font-semibold tt-subject">{cell.subjectShort}</div>
-        <div className="opacity-80 text-[11px] truncate">{cell.teacher}</div>
+        <div className="flex items-start justify-between gap-2">
+          <div className="font-semibold tt-subject truncate">{cell.subjectShort}</div>
+          <div className="text-[11px] font-bold opacity-90">{tShort}</div>
+        </div>
         <div className="opacity-80 text-[11px] truncate">{cell.room}</div>
       </div>
     );
   }
 
+  // ✅ LAB: lab left, teacher short right per batch row
   if (isLabBlock(cell)) {
     return (
       <div className={`${base} p-0`}>
         <div className="tt-cell-inner flex flex-col">
-          {cell.batches.map((b, idx) => (
-            <Draggable
-              key={b.batch}
-              draggableId={`labrow-${day}-${p}-${b.batch}`}
-              index={idx}
-              isDragDisabled={!editable}
-            >
-              {(provided) => (
-                <div
-                  ref={provided.innerRef}
-                  {...provided.draggableProps}
-                  {...provided.dragHandleProps}
-                  className={`tt-lab-row px-2 py-1 text-[11px] flex justify-between items-center ${
-                    idx !== cell.batches.length - 1 ? "border-b border-black" : ""
-                  }`}
-                >
-                  <div className="font-semibold truncate">
-                    {b.batch} - {b.labShort}
+          {cell.batches.map((b, idx) => {
+            const tShort = (b.teacherShort || b.teacher || "").trim();
+            return (
+              <Draggable
+                key={b.batch}
+                draggableId={`labrow-${day}-${p}-${b.batch}`}
+                index={idx}
+                isDragDisabled={!editable}
+              >
+                {(provided) => (
+                  <div
+                    ref={provided.innerRef}
+                    {...provided.draggableProps}
+                    {...provided.dragHandleProps}
+                    className={`tt-lab-row px-2 py-1 text-[11px] flex justify-between items-center ${
+                      idx !== cell.batches.length - 1 ? "border-b border-black" : ""
+                    }`}
+                  >
+                    <div className="font-semibold truncate">
+                      {b.batch} - {b.labShort}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="text-[11px] font-bold opacity-90">{tShort}</div>
+                      <div className="room truncate">{b.roomShort}</div>
+                    </div>
                   </div>
-                  <div className="room truncate">{b.roomShort}</div>
-                </div>
-              )}
-            </Draggable>
-          ))}
+                )}
+              </Draggable>
+            );
+          })}
         </div>
       </div>
     );
@@ -400,21 +391,25 @@ function DroppableSlot({
   children: React.ReactNode;
 }) {
   const dropDisabled =
-  !editable ||
-  (isMerged(cell) && !(cell.into && typeof cell.into === "number"));
-
+    !editable ||
+    (isMerged(cell) && !(cell.into && typeof cell.into === "number"));
 
   return (
     <Droppable droppableId={droppableId} isDropDisabled={dropDisabled}>
       {(provided, snapshot) => (
-        <div ref={provided.innerRef} {...provided.droppableProps} className={snapshot.isDraggingOver ? "bg-black/5" : ""}>
+        <div
+          ref={provided.innerRef}
+          {...provided.droppableProps}
+          className={snapshot.isDraggingOver ? "bg-black/5" : ""}
+        >
           {children}
-          {provided.placeholder}
+          {provided.placeholder as any}
         </div>
       )}
     </Droppable>
   );
 }
+
 
 function renderPeriodRow({
   day,
@@ -435,13 +430,11 @@ function renderPeriodRow({
   while (p <= endP) {
     const cell = dayData[p] ?? null;
 
-    // merged hour: skip (previous lab spans 2 columns)
     if (isMerged(cell)) {
       p += 1;
       continue;
     }
 
-    // LAB block: span 2 columns (NOT draggable as whole, only rows draggable)
     if (isLabBlock(cell)) {
       const droppableId = `${day}-${p}`;
 
@@ -457,7 +450,6 @@ function renderPeriodRow({
       continue;
     }
 
-    // lecture cell: draggable when editable
     const droppableId = `${day}-${p}`;
     if (isLecture(cell)) {
       const draggableId = `lec-${day}-${p}`;
@@ -478,7 +470,6 @@ function renderPeriodRow({
       continue;
     }
 
-    // empty slot: droppable target
     cells.push(
       <div key={p}>
         <DroppableSlot droppableId={droppableId} editable={editable} cell={cell}>

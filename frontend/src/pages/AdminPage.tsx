@@ -47,6 +47,8 @@ export default function AdminPage() {
   const [lectureRooms, setLectureRooms] = useState<LectureRoom[]>([]);
 
   const [newTeacher, setNewTeacher] = useState("");
+  const [newTeacherShort, setNewTeacherShort] = useState(""); // ✅
+
   const [newBranch, setNewBranch] = useState("");
   const [newLabName, setNewLabName] = useState("");
   const [newLabShort, setNewLabShort] = useState("");
@@ -85,7 +87,7 @@ export default function AdminPage() {
     try {
       setBusy(true);
       await fn();
-      await refreshAll(); // ✅ makes the new item show immediately
+      await refreshAll();
     } catch (e: any) {
       setError(e?.message ?? "Failed");
     } finally {
@@ -98,8 +100,7 @@ export default function AdminPage() {
       <div>
         <div className="text-2xl font-bold">Admin Panel • Master Data</div>
         <div className="text-sm opacity-70">
-          This data is stored permanently in SQLite (<code>backend/timetable.db</code>). If you refresh the page and it’s still
-          here, it’s saved.
+          This data is stored permanently in SQLite (<code>backend/timetable.db</code>).
         </div>
       </div>
 
@@ -113,54 +114,67 @@ export default function AdminPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Teachers */}
         <Card title="Teachers" count={teachers.length}>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             <input
               className="border p-2 w-full text-sm"
               value={newTeacher}
               onChange={(e) => setNewTeacher(e.target.value)}
-              placeholder="Teacher name"
+              placeholder="Teacher name (e.g. Prachi Shah)"
             />
-            <button
-              className="px-3 py-2 border border-black text-sm"
-              disabled={busy}
-              onClick={() =>
-                run(async () => {
-                  const name = newTeacher.trim();
-                  if (!name) throw new Error("Teacher name required");
-                  await createTeacher(name);
-                  setNewTeacher("");
-                })
-              }
-            >
-              Add
-            </button>
+            <input
+              className="border p-2 w-full text-sm"
+              value={newTeacherShort}
+              onChange={(e) => setNewTeacherShort(e.target.value)}
+              placeholder="Short (e.g. PS)"
+            />
           </div>
+
+          <button
+            className="px-3 py-2 border border-black text-sm"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const name = newTeacher.trim();
+                const short = newTeacherShort.trim();
+                if (!name) throw new Error("Teacher name required");
+                if (!short) throw new Error("Teacher shortform required (e.g. PS)");
+                await createTeacher(name, short);
+                setNewTeacher("");
+                setNewTeacherShort("");
+              })
+            }
+          >
+            Add
+          </button>
 
           <div className="max-h-40 overflow-auto border border-black p-2 text-sm">
             {teachers.length === 0 ? (
               <div className="opacity-60">No teachers yet.</div>
             ) : (
               <div className="space-y-1">
-  {teachers.map((t) => (
-    <div key={t.id} className="flex items-center justify-between border border-black p-2">
-      <div className="text-sm">{t.name}</div>
-      <button
-        className="px-2 py-1 border border-black text-xs"
-        disabled={busy}
-        onClick={() =>
-          run(async () => {
-            const ok = window.confirm(`Delete teacher "${t.name}"?\nThis will also remove any mappings using them.`);
-            if (!ok) return;
-            await deleteTeacher(t.id);
-          })
-        }
-      >
-        Delete
-      </button>
-    </div>
-  ))}
-</div>
-
+                {teachers.map((t) => (
+                  <div key={t.id} className="flex items-center justify-between border border-black p-2">
+                    <div className="text-sm">
+                      {t.name} <span className="opacity-70">({t.short || t.name})</span>
+                    </div>
+                    <button
+                      className="px-2 py-1 border border-black text-xs"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          const ok = window.confirm(
+                            `Delete teacher "${t.name}"?\nThis will also remove any mappings using them.`
+                          );
+                          if (!ok) return;
+                          await deleteTeacher(t.id);
+                        })
+                      }
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </Card>
@@ -195,28 +209,27 @@ export default function AdminPage() {
               <div className="opacity-60">No branches yet.</div>
             ) : (
               <div className="space-y-1">
-  {branches.map((b) => (
-    <div key={b.id} className="flex items-center justify-between border border-black p-2">
-      <div className="text-sm">{b.name}</div>
-      <button
-        className="px-2 py-1 border border-black text-xs"
-        disabled={busy}
-        onClick={() =>
-          run(async () => {
-            const ok = window.confirm(
-              `Delete branch "${b.name}"?\nThis will also remove its subject/lab mappings.`
-            );
-            if (!ok) return;
-            await deleteBranch(b.id);
-          })
-        }
-      >
-        Delete
-      </button>
-    </div>
-  ))}
-</div>
-
+                {branches.map((b) => (
+                  <div key={b.id} className="flex items-center justify-between border border-black p-2">
+                    <div className="text-sm">{b.name}</div>
+                    <button
+                      className="px-2 py-1 border border-black text-xs"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          const ok = window.confirm(
+                            `Delete branch "${b.name}"?\nThis will also remove its subject/lab mappings.`
+                          );
+                          if (!ok) return;
+                          await deleteBranch(b.id);
+                        })
+                      }
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </Card>
@@ -259,30 +272,29 @@ export default function AdminPage() {
               <div className="opacity-60">No labs yet.</div>
             ) : (
               <div className="space-y-1">
-  {labs.map((l) => (
-    <div key={l.id} className="flex items-center justify-between border border-black p-2">
-      <div className="text-sm">
-        {l.name} <span className="opacity-70">({l.short})</span>
-      </div>
-      <button
-        className="px-2 py-1 border border-black text-xs"
-        disabled={busy}
-        onClick={() =>
-          run(async () => {
-            const ok = window.confirm(
-              `Delete lab "${l.name}"?\nThis will also remove any lab mappings using it.`
-            );
-            if (!ok) return;
-            await deleteLab(l.id);
-          })
-        }
-      >
-        Delete
-      </button>
-    </div>
-  ))}
-</div>
-
+                {labs.map((l) => (
+                  <div key={l.id} className="flex items-center justify-between border border-black p-2">
+                    <div className="text-sm">
+                      {l.name} <span className="opacity-70">({l.short})</span>
+                    </div>
+                    <button
+                      className="px-2 py-1 border border-black text-xs"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          const ok = window.confirm(
+                            `Delete lab "${l.name}"?\nThis will also remove any lab mappings using it.`
+                          );
+                          if (!ok) return;
+                          await deleteLab(l.id);
+                        })
+                      }
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </Card>
@@ -291,37 +303,36 @@ export default function AdminPage() {
         <Card title="Lab Rooms" count={rooms.length}>
           <div className="flex gap-2">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-  <input
-    className="border p-2 w-full text-sm"
-    value={newRoom}
-    onChange={(e) => setNewRoom(e.target.value)}
-    placeholder="Full room name (e.g. Applied Science Lab II)"
-  />
-  <input
-    className="border p-2 w-full text-sm"
-    value={newRoomShort}
-    onChange={(e) => setNewRoomShort(e.target.value)}
-    placeholder="Short (optional) e.g. ASL2"
-  />
-</div>
+              <input
+                className="border p-2 w-full text-sm"
+                value={newRoom}
+                onChange={(e) => setNewRoom(e.target.value)}
+                placeholder="Full room name (e.g. Applied Science Lab II)"
+              />
+              <input
+                className="border p-2 w-full text-sm"
+                value={newRoomShort}
+                onChange={(e) => setNewRoomShort(e.target.value)}
+                placeholder="Short (optional) e.g. ASL2"
+              />
+            </div>
 
-<button
-  className="px-3 py-2 border border-black text-sm"
-  disabled={busy}
-  onClick={() =>
-    run(async () => {
-      const code = newRoom.trim();
-      const short = newRoomShort.trim();
-      if (!code) throw new Error("Room required");
-      await createRoom(code, short || undefined);  // ✅ pass short
-      setNewRoom("");
-      setNewRoomShort("");
-    })
-  }
->
-  Add
-</button>
-
+            <button
+              className="px-3 py-2 border border-black text-sm"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  const code = newRoom.trim();
+                  const short = newRoomShort.trim();
+                  if (!code) throw new Error("Room required");
+                  await createRoom(code, short || undefined);
+                  setNewRoom("");
+                  setNewRoomShort("");
+                })
+              }
+            >
+              Add
+            </button>
           </div>
 
           <div className="max-h-40 overflow-auto border border-black p-2 text-sm">
@@ -329,31 +340,29 @@ export default function AdminPage() {
               <div className="opacity-60">No lab rooms yet.</div>
             ) : (
               <div className="space-y-1">
-  {rooms.map((r) => (
-    <div key={r.id} className="flex items-center justify-between border border-black p-2">
-      <div className="text-sm">
-  {r.code} <span className="opacity-70">({r.short || r.code})</span>
-</div>
-
-      <button
-        className="px-2 py-1 border border-black text-xs"
-        disabled={busy}
-        onClick={() =>
-          run(async () => {
-            const ok = window.confirm(
-              `Delete lab room "${r.code}"?\nThis will also remove any lab mappings using it.`
-            );
-            if (!ok) return;
-            await deleteRoom(r.id);
-          })
-        }
-      >
-        Delete
-      </button>
-    </div>
-  ))}
-</div>
-
+                {rooms.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between border border-black p-2">
+                    <div className="text-sm">
+                      {r.code} <span className="opacity-70">({r.short || r.code})</span>
+                    </div>
+                    <button
+                      className="px-2 py-1 border border-black text-xs"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          const ok = window.confirm(
+                            `Delete lab room "${r.code}"?\nThis will also remove any lab mappings using it.`
+                          );
+                          if (!ok) return;
+                          await deleteRoom(r.id);
+                        })
+                      }
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </Card>
@@ -396,30 +405,29 @@ export default function AdminPage() {
               <div className="opacity-60">No subjects yet.</div>
             ) : (
               <div className="space-y-1">
-  {subjects.map((s) => (
-    <div key={s.id} className="flex items-center justify-between border border-black p-2">
-      <div className="text-sm">
-        {s.name} <span className="opacity-70">({s.short})</span>
-      </div>
-      <button
-        className="px-2 py-1 border border-black text-xs"
-        disabled={busy}
-        onClick={() =>
-          run(async () => {
-            const ok = window.confirm(
-              `Delete subject "${s.name}"?\nThis will also remove any subject mappings using it.`
-            );
-            if (!ok) return;
-            await deleteSubject(s.id);
-          })
-        }
-      >
-        Delete
-      </button>
-    </div>
-  ))}
-</div>
-
+                {subjects.map((s) => (
+                  <div key={s.id} className="flex items-center justify-between border border-black p-2">
+                    <div className="text-sm">
+                      {s.name} <span className="opacity-70">({s.short})</span>
+                    </div>
+                    <button
+                      className="px-2 py-1 border border-black text-xs"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          const ok = window.confirm(
+                            `Delete subject "${s.name}"?\nThis will also remove any subject mappings using it.`
+                          );
+                          if (!ok) return;
+                          await deleteSubject(s.id);
+                        })
+                      }
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </Card>
@@ -453,29 +461,28 @@ export default function AdminPage() {
             {lectureRooms.length === 0 ? (
               <div className="opacity-60">No lecture rooms yet.</div>
             ) : (
-             <div className="space-y-1">
-  {lectureRooms.map((r) => (
-    <div key={r.id} className="flex items-center justify-between border border-black p-2">
-      <div className="text-sm">{r.code}</div>
-      <button
-        className="px-2 py-1 border border-black text-xs"
-        disabled={busy}
-        onClick={() =>
-          run(async () => {
-            const ok = window.confirm(
-              `Delete lecture room "${r.code}"?\nThis will also remove any subject mappings using it.`
-            );
-            if (!ok) return;
-            await deleteLectureRoom(r.id);
-          })
-        }
-      >
-        Delete
-      </button>
-    </div>
-  ))}
-</div>
-
+              <div className="space-y-1">
+                {lectureRooms.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between border border-black p-2">
+                    <div className="text-sm">{r.code}</div>
+                    <button
+                      className="px-2 py-1 border border-black text-xs"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          const ok = window.confirm(
+                            `Delete lecture room "${r.code}"?\nThis will also remove any subject mappings using it.`
+                          );
+                          if (!ok) return;
+                          await deleteLectureRoom(r.id);
+                        })
+                      }
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </Card>

@@ -12,6 +12,9 @@ import {
   getBranchSubjects,
   upsertBranchSubject,
   deleteBranchSubject,
+  getBranchLabBatches,
+  upsertBranchLabBatch,
+  deleteBranchLabBatch,
   type Branch,
   type Lab,
   type Teacher,
@@ -24,6 +27,8 @@ function makeBatches(classStrength: number, batchSize: number) {
   const n = Math.max(1, Math.ceil(Math.max(1, classStrength) / Math.max(1, batchSize)));
   return Array.from({ length: n }, (_, i) => `B${i + 1}`);
 }
+
+type BatchMap = Record<string, { teacherId: number | ""; roomId: number | "" }>;
 
 export default function SetupPage({
   onReadyGenerate,
@@ -39,6 +44,7 @@ export default function SetupPage({
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [labRooms, setLabRooms] = useState<Room[]>([]);
   const [lectureRooms, setLectureRooms] = useState<LectureRoom[]>([]);
+  const [labBatchRows, setLabBatchRows] = useState<any[]>([]);
 
   const [classStrength, setClassStrength] = useState<number>(80);
   const [batchSize, setBatchSize] = useState<number>(20);
@@ -80,9 +86,14 @@ export default function SetupPage({
   }, []);
 
   async function refreshBranchMappings(branchId: number) {
-    const [labMap, subjMap] = await Promise.all([getBranchLabs(branchId), getBranchSubjects(branchId)]);
+    const [labMap, subjMap, labBatchMap] = await Promise.all([
+      getBranchLabs(branchId),
+      getBranchSubjects(branchId),
+      getBranchLabBatches(branchId),
+    ]);
     setBranchLabRows(Array.isArray(labMap) ? labMap : []);
     setBranchSubjectRows(Array.isArray(subjMap) ? subjMap : []);
+    setLabBatchRows(Array.isArray(labBatchMap) ? labBatchMap : []);
   }
 
   useEffect(() => {
@@ -180,7 +191,7 @@ export default function SetupPage({
             </select>
           </div>
 
-          {/* Keep these inputs (batches logic stays!) */}
+          {/* batches */}
           <div className="flex gap-4 items-center">
             <div className="text-sm font-bold">Class Strength:</div>
             <input
@@ -208,17 +219,19 @@ export default function SetupPage({
 
         {/* LABS TABLE */}
         <div>
-          <div className="font-bold mb-2">1) Configure Labs (lab → teacher → lab room)</div>
+          <div className="font-bold mb-2">1) Configure Labs (default + optional batch-wise)</div>
+
           <div className="overflow-auto">
             <table className="w-full text-sm border border-black">
               <thead className="bg-gray-100">
                 <tr>
                   <th className="border border-black p-2 text-left">Lab</th>
-                  <th className="border border-black p-2 text-left">Teacher</th>
-                  <th className="border border-black p-2 text-left">Lab Room</th>
+                  <th className="border border-black p-2 text-left">Teacher / Batch Teachers</th>
+                  <th className="border border-black p-2 text-left">Lab Room / Batch Rooms</th>
                   <th className="border border-black p-2 text-left">Save</th>
                 </tr>
               </thead>
+
               <tbody>
                 {labs.map((lab) => (
                   <BranchLabRow
@@ -228,6 +241,7 @@ export default function SetupPage({
                     rooms={labRooms}
                     selectedBranchId={selectedBranchId}
                     existing={branchLabRows.find((x) => x.lab_id === lab.id)}
+                    existingBatchRows={labBatchRows.filter((x) => x.lab_id === lab.id)}
                     batches={batches}
                     onSaved={async () => {
                       if (selectedBranchId) await refreshBranchMappings(selectedBranchId);
@@ -282,72 +296,250 @@ export default function SetupPage({
   );
 }
 
-function BranchLabRow({ lab, teachers, rooms, selectedBranchId, existing, onSaved }: any) {
+function BranchLabRow({
+  lab,
+  teachers,
+  rooms,
+  selectedBranchId,
+  existing,
+  existingBatchRows,
+  batches,
+  onSaved,
+}: any) {
   const [teacherId, setTeacherId] = useState<number | "">("");
   const [roomId, setRoomId] = useState<number | "">("");
 
+  const [useBatch, setUseBatch] = useState(false);
+  const [batchMap, setBatchMap] = useState<BatchMap>({});
+
+  // load defaults
   useEffect(() => {
     setTeacherId(existing?.teacher_id ?? "");
     setRoomId(existing?.room_id ?? "");
   }, [existing?.teacher_id, existing?.room_id]);
 
+  // load batch rows from DB into state
+  useEffect(() => {
+    const map: BatchMap = {};
+    for (const b of batches || []) map[b] = { teacherId: "", roomId: "" };
+
+    for (const r of existingBatchRows || []) {
+      const b = r.batch; // backend returns "batch"
+      if (!b) continue;
+      map[b] = { teacherId: r.teacher_id ?? "", roomId: r.room_id ?? "" };
+    }
+
+    const anySaved = (existingBatchRows || []).length > 0;
+    setUseBatch(anySaved);
+    setBatchMap(map);
+  }, [existingBatchRows, batches]);
+
+  // when user toggles batch ON, prefill missing from default teacher/room
+  useEffect(() => {
+    if (!useBatch) return;
+    setBatchMap((prev) => {
+      const next = { ...prev };
+      for (const b of batches || []) {
+        if (!next[b]) next[b] = { teacherId: "", roomId: "" };
+        if (!next[b].teacherId && teacherId) next[b].teacherId = teacherId;
+        if (!next[b].roomId && roomId) next[b].roomId = roomId;
+      }
+      return next;
+    });
+  }, [useBatch, batches, teacherId, roomId]);
+
+  // ✅ allow save in batch mode even if default teacher/room not picked
+  const canSaveDefault = !!selectedBranchId && !!teacherId && !!roomId;
+
+  const canSaveBatch =
+    !!selectedBranchId &&
+    useBatch &&
+    (batches || []).every((b: string) => batchMap?.[b]?.teacherId && batchMap?.[b]?.roomId);
+
   return (
     <tr>
-      <td className="border border-black p-2">
+      <td className="border border-black p-2 align-top">
         <div className="font-semibold">{lab.short}</div>
         <div className="text-xs opacity-70">{lab.name}</div>
+
+        <label className="mt-2 flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={useBatch} onChange={(e) => setUseBatch(e.target.checked)} />
+          <span>Different teacher/room per batch</span>
+        </label>
       </td>
 
-      <td className="border border-black p-2">
-        <select
-          className="border p-2 w-full"
-          value={teacherId}
-          onChange={(e) => setTeacherId(Number(e.target.value))}
-        >
-          <option value="">Select</option>
-          {teachers.map((t: any) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
+      {/* Teacher column */}
+      <td className="border border-black p-2 align-top">
+        {!useBatch ? (
+          <select
+            className="border p-2 w-full"
+            value={teacherId}
+            onChange={(e) => setTeacherId(e.target.value ? Number(e.target.value) : "")}
+          >
+            <option value="">Select</option>
+            {teachers.map((t: any) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="space-y-2">
+            {(batches || []).map((b: string) => (
+              <div key={b} className="flex items-center gap-2">
+                <div className="w-12 text-xs font-bold">{b}</div>
+                <select
+                  className="border p-1 w-full text-xs"
+                  value={batchMap?.[b]?.teacherId ?? ""}
+                  onChange={(e) =>
+                    setBatchMap((prev) => ({
+                      ...prev,
+                      [b]: {
+                        ...(prev[b] || { teacherId: "", roomId: "" }),
+                        teacherId: e.target.value ? Number(e.target.value) : "",
+                      },
+                    }))
+                  }
+                >
+                  <option value="">Select</option>
+                  {teachers.map((t: any) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
       </td>
 
-      <td className="border border-black p-2">
-        <select className="border p-2 w-full" value={roomId} onChange={(e) => setRoomId(Number(e.target.value))}>
-          <option value="">Select</option>
-          {rooms.map((r: any) => (
-            <option key={r.id} value={r.id}>
-              {r.code}
-            </option>
-          ))}
-        </select>
+      {/* Room column */}
+      <td className="border border-black p-2 align-top">
+        {!useBatch ? (
+          <select
+            className="border p-2 w-full"
+            value={roomId}
+            onChange={(e) => setRoomId(e.target.value ? Number(e.target.value) : "")}
+          >
+            <option value="">Select</option>
+            {rooms.map((r: any) => (
+              <option key={r.id} value={r.id}>
+                {r.code}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="space-y-2">
+            {(batches || []).map((b: string) => (
+              <div key={b} className="flex items-center gap-2">
+                <div className="w-12 text-xs font-bold">{b}</div>
+                <select
+                  className="border p-1 w-full text-xs"
+                  value={batchMap?.[b]?.roomId ?? ""}
+                  onChange={(e) =>
+                    setBatchMap((prev) => ({
+                      ...prev,
+                      [b]: {
+                        ...(prev[b] || { teacherId: "", roomId: "" }),
+                        roomId: e.target.value ? Number(e.target.value) : "",
+                      },
+                    }))
+                  }
+                >
+                  <option value="">Select</option>
+                  {rooms.map((r: any) => (
+                    <option key={r.id} value={r.id}>
+                      {r.code}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
       </td>
 
-      <td className="border border-black p-2 flex gap-2">
-        <button
-          className="px-3 py-2 border border-black"
-          disabled={!selectedBranchId || !teacherId || !roomId}
-          onClick={async () => {
-            if (!selectedBranchId || !teacherId || !roomId) return;
-            await upsertBranchLab(selectedBranchId, lab.id, teacherId as number, roomId as number);
-            await onSaved();
-          }}
-        >
-          Save
-        </button>
-
-        {existing && selectedBranchId && (
+      {/* Save */}
+      <td className="border border-black p-2 align-top">
+        <div className="flex gap-2">
           <button
-            className="px-3 py-2 border border-black"
+            className={`px-3 py-2 border border-black ${
+              useBatch ? (canSaveBatch ? "" : "opacity-50") : canSaveDefault ? "" : "opacity-50"
+            }`}
+            disabled={useBatch ? !canSaveBatch : !canSaveDefault}
             onClick={async () => {
-              await deleteBranchLab(selectedBranchId, lab.id);
-              await onSaved();
+              if (!selectedBranchId) return;
+
+              try {
+                // ✅ ALWAYS ensure branch_labs is saved (generator depends on it)
+                let fallbackTeacherId = teacherId;
+                let fallbackRoomId = roomId;
+
+                if (useBatch) {
+                  const firstBatch = (batches || [])[0];
+                  const firstRow = firstBatch ? batchMap?.[firstBatch] : null;
+
+                  if (!fallbackTeacherId) fallbackTeacherId = firstRow?.teacherId ?? "";
+                  if (!fallbackRoomId) fallbackRoomId = firstRow?.roomId ?? "";
+                }
+
+                if (!fallbackTeacherId || !fallbackRoomId) {
+                  alert("Please select default teacher+room OR fill B1 batch teacher+room.");
+                  return;
+                }
+
+                await upsertBranchLab(
+                  selectedBranchId,
+                  lab.id,
+                  fallbackTeacherId as number,
+                  fallbackRoomId as number
+                );
+
+                if (useBatch) {
+                  for (const b of batches || []) {
+                    const row = batchMap[b];
+                    if (!row?.teacherId || !row?.roomId) continue;
+
+                    await upsertBranchLabBatch(
+                      selectedBranchId,
+                      lab.id,
+                      b,
+                      row.teacherId as number,
+                      row.roomId as number
+                    );
+                  }
+                } else {
+                  for (const r of existingBatchRows || []) {
+                    await deleteBranchLabBatch(selectedBranchId, lab.id, r.batch);
+                  }
+                }
+
+                await onSaved();
+              } catch (e: any) {
+                console.error(e);
+                alert(e?.message ?? "Failed to save lab mapping");
+              }
             }}
           >
-            Remove
+            Save
           </button>
-        )}
+
+          {existing && selectedBranchId && (
+            <button
+              className="px-3 py-2 border border-black"
+              onClick={async () => {
+                await deleteBranchLab(selectedBranchId, lab.id);
+                for (const r of existingBatchRows || []) {
+                  await deleteBranchLabBatch(selectedBranchId, lab.id, r.batch);
+                }
+                await onSaved();
+              }}
+            >
+              Remove
+            </button>
+          )}
+        </div>
       </td>
     </tr>
   );
@@ -372,8 +564,13 @@ function BranchSubjectRow({ subject, teachers, lectureRooms, selectedBranchId, e
         <div className="font-semibold">{subject.short}</div>
         <div className="text-xs opacity-70">{subject.name}</div>
       </td>
+
       <td className="border border-black p-2">
-        <select className="border p-2 w-full" value={teacherId} onChange={(e) => setTeacherId(Number(e.target.value))}>
+        <select
+          className="border p-2 w-full"
+          value={teacherId}
+          onChange={(e) => setTeacherId(e.target.value ? Number(e.target.value) : "")}
+        >
           <option value="">Select</option>
           {teachers.map((t: any) => (
             <option key={t.id} value={t.id}>
@@ -382,11 +579,12 @@ function BranchSubjectRow({ subject, teachers, lectureRooms, selectedBranchId, e
           ))}
         </select>
       </td>
+
       <td className="border border-black p-2">
         <select
           className="border p-2 w-full"
           value={lectureRoomId}
-          onChange={(e) => setLectureRoomId(Number(e.target.value))}
+          onChange={(e) => setLectureRoomId(e.target.value ? Number(e.target.value) : "")}
         >
           <option value="">Select</option>
           {lectureRooms.map((r: any) => (
@@ -396,6 +594,7 @@ function BranchSubjectRow({ subject, teachers, lectureRooms, selectedBranchId, e
           ))}
         </select>
       </td>
+
       <td className="border border-black p-2">
         <input
           type="number"
@@ -405,6 +604,7 @@ function BranchSubjectRow({ subject, teachers, lectureRooms, selectedBranchId, e
           onChange={(e) => setLpw(Number(e.target.value))}
         />
       </td>
+
       <td className="border border-black p-2 flex gap-2">
         <button
           className={`px-3 py-2 border border-black ${ready ? "" : "opacity-50"}`}
