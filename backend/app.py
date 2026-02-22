@@ -70,7 +70,9 @@ def _inject_teacher_shorts(branch_output, teacher_short_map):
   Adds 'teacherShort' into:
    - LECTURE cell
    - each row inside LAB_BLOCK.batches
-  Uses teacher name string as key.
+
+  ✅ Important: if teacherShort already exists (eg. from per-batch mapping),
+  do NOT overwrite it.
   """
   tt = branch_output.get("timetable") or {}
   for day in tt:
@@ -80,13 +82,15 @@ def _inject_teacher_shorts(branch_output, teacher_short_map):
         continue
 
       if cell.get("type") == "LECTURE":
-        tname = (cell.get("teacher") or "").strip()
-        cell["teacherShort"] = teacher_short_map.get(tname, tname)
+        if not cell.get("teacherShort"):
+          tname = (cell.get("teacher") or "").strip()
+          cell["teacherShort"] = teacher_short_map.get(tname, tname)
 
       elif cell.get("type") == "LAB_BLOCK":
         for row in cell.get("batches", []):
-          tname = (row.get("teacher") or "").strip()
-          row["teacherShort"] = teacher_short_map.get(tname, tname)
+          if not row.get("teacherShort"):
+            tname = (row.get("teacher") or "").strip()
+            row["teacherShort"] = teacher_short_map.get(tname, tname)
 
 
 # ----------------------------
@@ -494,7 +498,6 @@ def generate_labs_only():
   with get_conn() as conn:
     teacher_short_map = _get_teacher_short_map(conn)
 
-    # read persisted settings and build schedule
     st = get_settings(conn)
     schedule = build_schedule(st)
     days = schedule["days"]
@@ -570,8 +573,8 @@ def generate_full():
   teachers_accum = {}
   rooms_accum = {}
 
-  teacher_busy_global = set()  # (day, period, teacher_name)
-  room_busy_global = set()     # (day, period, room_code)
+  teacher_busy_global = set()
+  room_busy_global = set()
 
   with get_conn() as conn:
     teacher_short_map = _get_teacher_short_map(conn)
@@ -609,8 +612,11 @@ def generate_full():
         per_batch=per_batch_map.get(r["lab_id"], {})
       ) for r in lab_rows]
 
+      # ✅ ADDED s.name AS subject_name
       subj_rows = conn.execute("""
-        SELECT s.id AS subject_id, s.short AS subject_short,
+        SELECT s.id AS subject_id,
+               s.short AS subject_short,
+               s.name AS subject_name,
                t.name AS teacher_name,
                lr.code AS room_code,
                bs.lectures_per_week
@@ -625,6 +631,7 @@ def generate_full():
       subjects_cfg = [SubjectConfig(
         subject_id=r["subject_id"],
         subject_short=r["subject_short"],
+        subject_name=r["subject_name"],  # ✅ ADDED
         teacher_name=r["teacher_name"],
         room_code=r["room_code"],
         lectures_per_week=r["lectures_per_week"]

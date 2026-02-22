@@ -30,7 +30,14 @@ type LabRow = {
 
 type LabBlock = { type: "LAB_BLOCK"; start: number; end: number; batches: LabRow[] };
 type Merged = { type: "MERGED"; into: number };
-type LectureCell = { type: "LECTURE"; subjectShort: string; teacher: string; teacherShort?: string; room: string };
+type LectureCell = {
+  type: "LECTURE";
+  subjectShort: string;
+  subjectName?: string; // ✅ ADDED
+  teacher: string;
+  teacherShort?: string;
+  room: string;
+};
 type Cell = LabBlock | Merged | LectureCell | null;
 
 function isLecture(x: any): x is LectureCell {
@@ -81,7 +88,6 @@ export default function TimetableGrid({
   const afterLunch = PERIODS.filter((x) => x.p > lunchAfter);
 
   const gridTemplateColumns = React.useMemo(() => {
-    // Day col + periods + lunch col + periods
     const dayCol = "80px";
     const periodCol = "112px";
     const lunchCol = "90px";
@@ -109,7 +115,6 @@ export default function TimetableGrid({
     type DragKind = "LECTURE" | "LAB_ROW";
     const kind: DragKind = draggableId.startsWith("labrow-") ? "LAB_ROW" : "LECTURE";
 
-    // LAB ROW DRAG
     if (kind === "LAB_ROW") {
       const parts = draggableId.split("-");
       const batch = parts[3];
@@ -149,7 +154,6 @@ export default function TimetableGrid({
       return;
     }
 
-    // LECTURE DRAG
     if (!isLecture(fromCell)) return;
 
     const toCell = timetable?.[toDay]?.[toP] ?? null;
@@ -163,12 +167,12 @@ export default function TimetableGrid({
     }
   }
 
+  // ✅ NEW: build short->full maps
   const footerInfo = React.useMemo(() => {
-    const teacherSet = new Set<string>();
-    const roomSet = new Set<string>();
-    const subjectSet = new Set<string>();
-    const labSet = new Set<string>();
-
+    const teacherMap = new Map<string, string>(); // short -> full
+    const subjectMap = new Map<string, string>(); // short -> full
+    const roomMap = new Map<string, string>();    // short -> full ✅
+    const labSet = new Set<string>(); 
     const periodNums = PERIODS.map((x) => x.p);
 
     for (const day of DAYS) {
@@ -178,25 +182,46 @@ export default function TimetableGrid({
 
         if ((cell as any).type === "LAB_BLOCK") {
           for (const row of (cell as any).batches || []) {
-            if (row.teacher) teacherSet.add(row.teacher);
-            if (row.roomFull) roomSet.add(row.roomFull);
+            const rFull = (row.roomFull || "").trim();
+const rShort = (row.roomShort || row.roomFull || "").trim();
+if (rFull && rShort) roomMap.set(rShort, rFull);
             if (row.labShort) labSet.add(row.labShort);
+
+            const full = (row.teacher || "").trim();
+            const short = (row.teacherShort || row.teacher || "").trim();
+            if (full && short) teacherMap.set(short, full);
           }
         }
 
         if ((cell as any).type === "LECTURE") {
           const c: any = cell;
-          if (c.teacher) teacherSet.add(c.teacher);
-          if (c.room) roomSet.add(c.room);
-          if (c.subjectShort) subjectSet.add(c.subjectShort);
+
+          const r = (c.room || "").trim();
+if (r) roomMap.set(r, r);
+
+          const tFull = (c.teacher || "").trim();
+          const tShort = (c.teacherShort || c.teacher || "").trim();
+          if (tFull && tShort) teacherMap.set(tShort, tFull);
+
+          const sShort = (c.subjectShort || "").trim();
+          const sFull = (c.subjectName || "").trim();
+          if (sShort) subjectMap.set(sShort, sFull || sShort);
         }
       }
     }
 
     return {
-      teachers: Array.from(teacherSet).sort(),
-      rooms: Array.from(roomSet).sort(),
-      subjects: Array.from(subjectSet).sort(),
+      teachers: Array.from(teacherMap.entries())
+        .map(([short, full]) => ({ short, full }))
+        .sort((a, b) => a.short.localeCompare(b.short)),
+
+      subjects: Array.from(subjectMap.entries())
+        .map(([short, full]) => ({ short, full }))
+        .sort((a, b) => a.short.localeCompare(b.short)),
+
+      rooms: Array.from(roomMap.entries())
+  .map(([short, full]) => ({ short, full }))
+  .sort((a, b) => a.short.localeCompare(b.short)),
       labs: Array.from(labSet).sort(),
     };
   }, [timetable, DAYS, PERIODS]);
@@ -274,13 +299,14 @@ export default function TimetableGrid({
           </div>
         </DragDropContext>
 
+        {/* ✅ Footer: SHORT : Full Name */}
         <div className="mt-4 grid grid-cols-3 gap-4 text-[11px]">
           <div>
             <div className="font-bold mb-1">Teachers:</div>
             <div className="space-y-0.5">
               {footerInfo.teachers.map((t) => (
-                <div key={t} className="truncate">
-                  {t}
+                <div key={t.short} className="truncate">
+                  {t.short} : {t.full}
                 </div>
               ))}
             </div>
@@ -290,10 +316,10 @@ export default function TimetableGrid({
             <div className="font-bold mb-1">Classrooms / Labs:</div>
             <div className="space-y-0.5">
               {footerInfo.rooms.map((r) => (
-                <div key={r} className="truncate">
-                  {r}
-                </div>
-              ))}
+  <div key={r.short} className="truncate">
+    {r.short} : {r.full}
+  </div>
+))}
             </div>
           </div>
 
@@ -305,8 +331,8 @@ export default function TimetableGrid({
                 <div className="font-semibold mb-1">Subjects</div>
                 <div className="space-y-0.5">
                   {footerInfo.subjects.map((s) => (
-                    <div key={s} className="truncate">
-                      {s}
+                    <div key={s.short} className="truncate">
+                      {s.short} : {s.full}
                     </div>
                   ))}
                 </div>
@@ -342,18 +368,18 @@ function CellBox({
   p,
   editable,
 }: {
-  cell: Cell;
+  cell: any;
   day: string;
   p: number;
   editable: boolean;
 }) {
-  if (isMerged(cell)) {
+  if (cell && cell.type === "MERGED") {
     return <div className="grid-border tt-cell" />;
   }
 
   const base = "grid-border tt-cell px-2 py-2 text-[12px]";
 
-  if (isLecture(cell)) {
+  if (cell && cell.type === "LECTURE") {
     const tShort = (cell.teacherShort || cell.teacher || "").trim();
     return (
       <div className={`${base} flex flex-col justify-center`}>
@@ -366,11 +392,11 @@ function CellBox({
     );
   }
 
-  if (isLabBlock(cell)) {
+  if (cell && cell.type === "LAB_BLOCK") {
     return (
       <div className={`${base} p-0`}>
         <div className="tt-cell-inner flex flex-col">
-          {cell.batches.map((b, idx) => {
+          {cell.batches.map((b: any, idx: number) => {
             const tShort = (b.teacherShort || b.teacher || "").trim();
             return (
               <Draggable
@@ -417,10 +443,10 @@ function DroppableSlot({
 }: {
   droppableId: string;
   editable: boolean;
-  cell: Cell;
+  cell: any;
   children: React.ReactNode;
 }) {
-  const dropDisabled = !editable || (isMerged(cell) && !(cell.into && typeof cell.into === "number"));
+  const dropDisabled = !editable || (cell && cell.type === "MERGED" && !(cell.into && typeof cell.into === "number"));
 
   return (
     <Droppable droppableId={droppableId} isDropDisabled={dropDisabled}>
@@ -446,7 +472,7 @@ function renderPeriodRow({
   editable,
 }: {
   day: string;
-  dayData: Record<number, Cell>;
+  dayData: Record<number, any>;
   startP: number;
   endP: number;
   editable: boolean;
@@ -457,12 +483,12 @@ function renderPeriodRow({
   while (p <= endP) {
     const cell = dayData[p] ?? null;
 
-    if (isMerged(cell)) {
+    if (cell && cell.type === "MERGED") {
       p += 1;
       continue;
     }
 
-    if (isLabBlock(cell)) {
+    if (cell && cell.type === "LAB_BLOCK") {
       const droppableId = `${day}-${p}`;
 
       cells.push(
@@ -478,7 +504,7 @@ function renderPeriodRow({
     }
 
     const droppableId = `${day}-${p}`;
-    if (isLecture(cell)) {
+    if (cell && cell.type === "LECTURE") {
       const draggableId = `lec-${day}-${p}`;
       cells.push(
         <div key={p}>

@@ -18,7 +18,7 @@ class LabConfig:
   teacher_name: str
   room_full: str
   room_short: str
-  # per_batch: { "B1": {"teacher": "...", "roomFull": "...", "roomShort": "..."}, ... }
+  # per_batch: { "B1": {"teacher": "...", "roomFull": "...", "roomShort": "...", "teacherShort": "..."}, ... }
   per_batch: Optional[Dict[str, Dict[str, str]]] = None
 
 
@@ -26,6 +26,7 @@ class LabConfig:
 class SubjectConfig:
   subject_id: int
   subject_short: str
+  subject_name: str  # ✅ ADDED (needed for footer "SHORT : Full Name")
   teacher_name: str
   room_code: str
   lectures_per_week: int
@@ -48,8 +49,7 @@ def _min_to_hm(x: int) -> str:
 def build_schedule(settings: dict) -> dict:
   """
   Builds timetable schedule config from settings.
-
-  Defaults are set to match your current hardcoded UI:
+  Defaults match your current UI:
   - Mon-Fri
   - Start 08:30
   - Lunch 12:30-13:15
@@ -74,7 +74,6 @@ def build_schedule(settings: dict) -> dict:
   if not (s < ls < le < e):
     raise ValueError("Invalid timings: must satisfy start < lunchStart < lunchEnd < end")
 
-  # periods before lunch and after lunch must align to period size
   if (ls - s) % period_minutes != 0 or (e - le) % period_minutes != 0:
     raise ValueError("Timings must align with periodMinutes (default 60).")
 
@@ -86,9 +85,8 @@ def build_schedule(settings: dict) -> dict:
 
   total = before + after
   periods = list(range(1, total + 1))
-  lunch_after_period = before  # lunch column is after this period number
+  lunch_after_period = before
 
-  # Build labels (time ranges) for each period number
   period_labels = []
   cur = s
   for i in range(1, before + 1):
@@ -102,13 +100,12 @@ def build_schedule(settings: dict) -> dict:
     period_labels.append({"p": i, "label": str(i), "time": f"{_min_to_hm(cur)}-{_min_to_hm(nxt)}"})
     cur = nxt
 
-  # lab starts: 2-hour blocks; cannot cross lunch boundary; prefer odd starts like before
   lab_starts = []
   for p in periods:
     if p + 1 not in periods:
       continue
     if p == lunch_after_period:
-      continue  # would cross lunch
+      continue
     if p % 2 == 1:
       lab_starts.append(p)
 
@@ -127,7 +124,6 @@ def build_schedule(settings: dict) -> dict:
 
 
 def _defaults_schedule() -> dict:
-  # fallback schedule that matches old behavior
   return {
     "days": DEFAULT_DAYS,
     "periods": DEFAULT_PERIODS,
@@ -198,8 +194,6 @@ def generate_labs_only_timetable(
     return {"branch": branch_name, "timetable": timetable, "meta": schedule}
 
   m = len(labs)
-
-  # ✅ KEY FIX retained
   total_blocks_needed = max(m, nb)
 
   all_slots = build_balanced_lab_slots(days, lab_starts)
@@ -213,7 +207,6 @@ def generate_labs_only_timetable(
     slot_idx += 1
     end = start + 1
 
-    # ensure end exists in periods (safety)
     if end not in periods:
       continue
 
@@ -249,12 +242,13 @@ def generate_labs_only_timetable(
         "teacher": teacher,
         "roomShort": room_short,
         "roomFull": room_full,
+        # NOTE: teacherShort is injected later in app.py (_inject_teacher_shorts),
+        # but if you ever want per_batch teacherShort, app.py already stores it in per_batch_map.
       })
 
       if teacher:
         teachers_in_block.add(teacher)
 
-    # Teacher clash check (both hours)
     clash = any(
       (day, start, t) in teacher_busy_global or (day, end, t) in teacher_busy_global
       for t in teachers_in_block
@@ -318,10 +312,7 @@ def _choose_best_slot_for_lecture(
 ) -> Optional[Tuple[str, int]]:
   candidates: List[Tuple[float, str, int]] = []
 
-  # dynamic early-penalty: earlier slightly better, later worse
-  # keep similar behavior to your previous table, but generalized
   def early_penalty(p: int) -> float:
-    # if up to 8, mimic old-ish bias; otherwise gentle slope
     if p <= 4:
       return 0.2 * (p - 1)
     return 0.6 + 0.4 * (p - 4)
@@ -338,14 +329,12 @@ def _choose_best_slot_for_lecture(
 
       score = 0.0
       score += early_penalty(p)
-
       score += 5 * subj_day_counts[subj_short].get(day, 0)
 
       if _adjacent_same_subject(tt, day, p, subj_short):
         score += 3
 
       score += 0.5 * _teacher_load_on_day(tt, day, teacher, periods)
-
       score += random.random() * 0.05
       candidates.append((score, day, p))
 
@@ -401,14 +390,15 @@ def generate_full_timetable(
 
   subj_day_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
-  sessions: List[Tuple[str, str, str]] = []
+  # ✅ include subject_name in sessions
+  sessions: List[Tuple[str, str, str, str]] = []
   for subj in subjects:
     for _ in range(int(subj.lectures_per_week)):
-      sessions.append((subj.subject_short, subj.teacher_name, subj.room_code))
+      sessions.append((subj.subject_short, subj.subject_name, subj.teacher_name, subj.room_code))
 
   random.shuffle(sessions)
 
-  for subj_short, teacher_name, room_code in sessions:
+  for subj_short, subj_name, teacher_name, room_code in sessions:
     slot = _choose_best_slot_for_lecture(
       tt, teacher_busy_global, room_busy_global,
       subj_short, teacher_name, room_code,
@@ -424,6 +414,7 @@ def generate_full_timetable(
     tt[day][p] = {
       "type": "LECTURE",
       "subjectShort": subj_short,
+      "subjectName": subj_name,  # ✅ ADDED (for footer)
       "teacher": teacher_name,
       "room": room_code,
     }
